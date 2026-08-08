@@ -1,0 +1,11 @@
+from sqlalchemy import Column, Integer, String, Boolean
+from app.core.database import Base
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(50), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    rol = Column(String(20), nullable=False, default="ventas") # admin, inventario, ventas
+    activo = Column(Boolean, default=True)
