@@ -2,8 +2,7 @@ import axios from 'axios';
 
 // ¡SÚPER IMPORTANTE! Cambia esta IP por la IP local de tu PC en tu red Wi-Fi.
 // (Para saber tu IP en Linux, abre una terminal y escribe: hostname -I)
-const API_URL = 'hclear
-ttps://legal-lies-sing.loca.lt'; 
+const API_URL = 'https://legal-lies-sing.loca.lt'; 
 
 export const loginUser = async (username: string, password: string) => {
   try {
