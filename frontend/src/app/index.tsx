@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { loginUser } from '../api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import VentasModal from '../components/VentasModal';
 
 export default function HomeScreen() {
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('123456');
   const [loading, setLoading] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
+  const [showVentas, setShowVentas] = useState(false);
   const [rol, setRol] = useState('');
 
   useEffect(() => {
@@ -54,9 +56,26 @@ export default function HomeScreen() {
       <View style={styles.container}>
         <Text style={styles.title}>¡Bienvenido!</Text>
         <Text style={styles.subtitle}>Tu rol es: {rol}</Text>
-        <TouchableOpacity style={styles.button} onPress={handleLogout}>
+        
+        <TouchableOpacity 
+          style={[styles.button, { backgroundColor: '#28a745', marginTop: 20 }]} 
+          onPress={() => setShowVentas(true)}
+        >
+          <Text style={styles.buttonText}>IR A PUNTO DE VENTA</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
+          style={[styles.button, { backgroundColor: '#dc3545', marginTop: 10 }]} 
+          onPress={handleLogout}
+        >
           <Text style={styles.buttonText}>CERRAR SESIÓN</Text>
         </TouchableOpacity>
+
+        {/* El Modal de Ventas */}
+        <VentasModal 
+          visible={showVentas} 
+          onClose={() => setShowVentas(false)} 
+        />
       </View>
     );
   }

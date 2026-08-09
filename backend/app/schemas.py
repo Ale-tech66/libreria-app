@@ -1,5 +1,7 @@
+from datetime import datetime
+from typing import List, Optional
+
 from pydantic import BaseModel
-from typing import Optional
 
 class UserCreate(BaseModel):
     username: str
@@ -18,3 +20,40 @@ class UserOut(BaseModel):
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+class ProductoBase(BaseModel):
+    codigo_barras: str
+    nombre: str
+    autor: Optional[str] = None
+    editorial: Optional[str] = None
+    precio_venta: float
+    stock: int = 0
+    unidades_por_caja: int = 1
+
+class ProductoCreate(ProductoBase):
+    pass
+
+class ProductoOut(ProductoBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class VentaDetalleCreate(BaseModel):
+    producto_id: int
+    cantidad: int
+    precio_unitario: float
+
+class VentaCreate(BaseModel):
+    metodo_pago: str = "efectivo"
+    detalles: List[VentaDetalleCreate]
+
+class VentaOut(BaseModel):
+    id: int
+    fecha: datetime
+    total: float
+    metodo_pago: str
+
+    class Config:
+        from_attributes = True
