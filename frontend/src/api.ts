@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ¡Recuerda poner aquí la URL que te dio localtunnel!
-const API_URL = 'https://cruel-results-turn.loca.lt'; 
+const API_URL = 'https://metal-doodles-tie.loca.lt'; 
 
 export const loginUser = async (username: string, password: string) => {
   try {
