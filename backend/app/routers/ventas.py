@@ -7,6 +7,7 @@ from app.models.venta import Venta, VentaDetalle
 from app.models.producto import Producto
 from app.schemas import VentaCreate, VentaOut
 from decimal import Decimal
+from typing import List
 
 router = APIRouter(
     prefix="/ventas",
@@ -60,3 +61,8 @@ def crear_venta(venta: VentaCreate, db: Session = Depends(get_db)):
     db.refresh(nueva_venta)
     
     return nueva_venta
+
+@router.get("/", response_model=List[VentaOut])
+def listar_ventas(db: Session = Depends(get_db)):
+    ventas = db.query(Venta).order_by(Venta.fecha.desc()).all()
+    return ventas

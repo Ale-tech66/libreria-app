@@ -5,6 +5,7 @@ import ScannerModal from '../components/ScannerModal';
 import { buscarProductoPorCodigo } from '../api';
 import ProductoFormModal from '../components/ProductoFormModal'; 
 import { RefreshControl } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function InventarioScreen() {
   const [productos, setProductos] = useState<any[]>([]);
@@ -13,10 +14,16 @@ export default function InventarioScreen() {
   const [scanning, setScanning] = useState(false);
   const [showForm, setShowForm] = useState(false); 
   const [refreshing, setRefreshing] = useState(false);
+  const [rol, setRol] = useState('');
   const [scannedCode, setScannedCode] = useState(''); 
 
   useEffect(() => {
     cargarProductos();
+    const getRol = async () => {
+      const savedRol = await AsyncStorage.getItem('rol');
+      if (savedRol) setRol(savedRol);
+    };
+    getRol();
   }, []);
 
   const cargarProductos = async () => {
@@ -71,12 +78,14 @@ export default function InventarioScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Inventario</Text>
-        <TouchableOpacity 
-          style={styles.scanButton}
-          onPress={() => setScanning(true)}
-        >
-          <Text style={styles.scanButtonText}>Escanear</Text>
-        </TouchableOpacity>
+        {(rol === 'admin' || rol === 'inventario') && (
+          <TouchableOpacity 
+            style={styles.scanButton}
+            onPress={() => setScanning(true)}
+          >
+            <Text style={styles.scanButtonText}>Escanear</Text>
+          </TouchableOpacity>
+        )}
       </View>
       
       <FlatList

@@ -3,6 +3,7 @@ import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator,
 import { loginUser } from '../api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import VentasModal from '../components/VentasModal';
+import HistorialModal from '../components/HistorialModal';
 
 export default function HomeScreen() {
   const [username, setUsername] = useState('admin');
@@ -10,10 +11,16 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(false);
   const [isLogged, setIsLogged] = useState(false);
   const [showVentas, setShowVentas] = useState(false);
+  const [showHistorial, setShowHistorial] = useState(false);
   const [rol, setRol] = useState('');
 
   useEffect(() => {
     checkLogin();
+    const getRol = async () => {
+      const savedRol = await AsyncStorage.getItem('rol');
+      if (savedRol) setRol(savedRol);
+    };
+    getRol();
   }, []);
 
   const checkLogin = async () => {
@@ -57,12 +64,23 @@ export default function HomeScreen() {
         <Text style={styles.title}>¡Bienvenido!</Text>
         <Text style={styles.subtitle}>Tu rol es: {rol}</Text>
         
-        <TouchableOpacity 
-          style={[styles.button, { backgroundColor: '#28a745', marginTop: 20 }]} 
-          onPress={() => setShowVentas(true)}
-        >
-          <Text style={styles.buttonText}>IR A PUNTO DE VENTA</Text>
-        </TouchableOpacity>
+        {(rol === 'admin' || rol === 'ventas') && (
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#28a745', marginTop: 20 }]} 
+            onPress={() => setShowVentas(true)}
+          >
+            <Text style={styles.buttonText}>IR A PUNTO DE VENTA</Text>
+          </TouchableOpacity>
+        )}
+
+        {rol === 'admin' && (
+          <TouchableOpacity 
+            style={[styles.button, { backgroundColor: '#007bff', marginTop: 10 }]} 
+            onPress={() => setShowHistorial(true)}
+          >
+            <Text style={styles.buttonText}>VER HISTORIAL DE VENTAS</Text>
+          </TouchableOpacity>
+        )}
 
         <TouchableOpacity 
           style={[styles.button, { backgroundColor: '#dc3545', marginTop: 10 }]} 
@@ -71,10 +89,14 @@ export default function HomeScreen() {
           <Text style={styles.buttonText}>CERRAR SESIÓN</Text>
         </TouchableOpacity>
 
-        {/* El Modal de Ventas */}
         <VentasModal 
           visible={showVentas} 
           onClose={() => setShowVentas(false)} 
+        />
+
+        <HistorialModal 
+          visible={showHistorial} 
+          onClose={() => setShowHistorial(false)} 
         />
       </View>
     );

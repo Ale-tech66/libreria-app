@@ -2,7 +2,7 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // ¡Recuerda poner aquí la URL que te dio localtunnel!
-const API_URL = 'https://metal-doodles-tie.loca.lt'; 
+const API_URL = 'https://libreria-api-4lr3.onrender.com'; 
 
 export const loginUser = async (username: string, password: string) => {
   try {
@@ -107,5 +107,20 @@ export const registrarVenta = async (ventaData: any) => {
     return response.data;
   } catch (error: any) {
     throw new Error(error.response?.data?.detail || 'Error al registrar la venta');
+  }
+};
+
+// Obtener historial de ventas
+export const getHistorialVentas = async () => {
+  try {
+    const token = await AsyncStorage.getItem('token');
+    const response = await axios.get(`${API_URL}/ventas/`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    return response.data;
+  } catch (error: any) {
+    throw new Error(error.response?.data?.detail || 'Error al obtener el historial');
   }
 };
