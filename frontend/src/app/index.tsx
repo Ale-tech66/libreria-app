@@ -32,19 +32,43 @@ export default function HomeScreen() {
     }
   };
 
+  const decodeBase64 = (value: string) => {
+    if (typeof globalThis.atob === 'function') {
+      return globalThis.atob(value);
+    }
+
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    let result = '';
+    let buffer = 0;
+    let bits = 0;
+
+    for (let i = 0; i < value.length; i += 1) {
+      const idx = chars.indexOf(value[i]);
+      if (idx === -1) continue;
+      buffer = (buffer << 6) | idx;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        result += String.fromCharCode((buffer >> bits) & 0xff);
+      }
+    }
+
+    return result;
+  };
+
   const handleLogin = async () => {
     setLoading(true);
     try {
       const data = await loginUser(username, password);
       await AsyncStorage.setItem('token', data.access_token);
       
-      // Decodificar el JWT para sacar el rol (sin librerías extra)
       const parts = data.access_token.split('.');
-      const payload = JSON.parse(atob(parts[1]));
-      await AsyncStorage.setItem('rol', payload.rol);
+      const payload = parts.length >= 2 ? JSON.parse(decodeBase64(parts[1])) : { rol: '' };
+      const rolValue = payload?.rol ?? '';
+      await AsyncStorage.setItem('rol', rolValue);
       
       setIsLogged(true);
-      setRol(payload.rol);
+      setRol(rolValue);
     } catch (error: any) {
       Alert.alert('Error', error.message);
     } finally {
