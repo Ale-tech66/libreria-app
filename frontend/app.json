@@ -7,6 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "frontendexpo",
     "userInterfaceStyle": "automatic",
+   
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -17,7 +18,12 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
+      "predictiveBackGestureEnabled": false,
+      "package": "com.alejondro.frontend_expo"
     },
     "web": {
       "output": "static",
@@ -37,6 +43,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "04e8b2d4-7e48-4d90-8a6c-31b254511670"
+      }
     }
   }
 }
