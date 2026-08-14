@@ -1,7 +1,24 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, ActivityIndicator, Modal } from 'react-native';
-import { buscarProductoPorCodigo, registrarVenta } from '../api';
-import ScannerModal from './ScannerModal';
+import { Ionicons } from '@expo/vector-icons';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+
+import { buscarProductoPorCodigo } from '@/api/productos';
+import ScannerModal from '@/components/ScannerModal';
+import { ThemedButton, ThemedCard, ThemedChip, ThemedHeader, ThemedScreen } from '@/design/components';
+import { useTheme } from '@/design/ThemeContext';
+import { useCarrito } from '@/hooks/useCarrito';
+import { MetodoPago } from '@/types';
+
+const METODOS: MetodoPago[] = ['efectivo', 'tarjeta', 'transferencia', 'yape'];
 
 interface VentasModalProps {
   visible: boolean;
@@ -9,132 +26,261 @@ interface VentasModalProps {
 }
 
 export default function VentasModal({ visible, onClose }: VentasModalProps) {
-  const [carrito, setCarrito] = useState<any[]>([]);
+  const { tema } = useTheme();
+  const { items, total, cobrando, agregar, cambiarCantidad, eliminar, cobrar } = useCarrito();
   const [scanning, setScanning] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [total, setTotal] = useState(0);
-
-  useEffect(() => {
-    const t = carrito.reduce((sum, item) => sum + item.subtotal, 0);
-    setTotal(t);
-  }, [carrito]);
+  const [metodo, setMetodo] = useState<MetodoPago>('efectivo');
 
   const handleScan = async (data: string) => {
     setScanning(false);
     try {
       const producto = await buscarProductoPorCodigo(data);
-      if (producto) {
-        const existente = carrito.find(item => item.producto_id === producto.id);
-        if (existente) {
-          setCarrito(carrito.map(item => 
-            item.producto_id === producto.id 
-              ? { ...item, cantidad: item.cantidad + 1, subtotal: (item.cantidad + 1) * item.precio_unitario } 
-              : item
-          ));
-        } else {
-          setCarrito([...carrito, { 
-            producto_id: producto.id, 
-            nombre: producto.nombre, 
-            cantidad: 1, 
-            precio_unitario: producto.precio_venta, 
-            subtotal: producto.precio_venta 
-          }]);
-        }
-      } else {
-        Alert.alert('Error', 'Producto no registrado.');
+      if (!producto) {
+        Alert.alert('Error', 'Producto no registrado. Ve a Inventario para agregarlo.');
+        return;
       }
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
+      if (!producto.activo) {
+        Alert.alert('Error', 'Este producto está desactivado y no puede venderse.');
+        return;
+      }
+      agregar(producto);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Error al escanear');
     }
   };
 
   const handleCobrar = async () => {
-    if (carrito.length === 0) return;
-    setLoading(true);
     try {
-      const ventaData = {
-        metodo_pago: 'efectivo',
-        detalles: carrito.map(item => ({
-          producto_id: item.producto_id,
-          cantidad: item.cantidad,
-          precio_unitario: item.precio_unitario,
-        }))
-      };
-      await registrarVenta(ventaData);
+      await cobrar(metodo);
       Alert.alert('Éxito', `Venta registrada correctamente.\nTotal: $${total.toFixed(2)}`);
-      setCarrito([]); // Limpiar carrito
-      onClose(); // Cerrar modal al cobrar
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setLoading(false);
+      onClose();
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Error al registrar la venta');
     }
   };
 
   return (
     <Modal visible={visible} animationType="slide">
-      <View style={styles.container}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Punto de Venta</Text>
-          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
-            <Text style={styles.closeText}>X</Text>
-          </TouchableOpacity>
-        </View>
+      <ThemedScreen>
+        <View style={styles.contenido}>
+          <ThemedHeader
+            titulo="Punto de Venta"
+            subtitulo="Escanea y cobra"
+            derecho={
+              <TouchableOpacity
+                onPress={onClose}
+                style={[styles.botonCerrar, { backgroundColor: tema.peligro }]}
+              >
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+            }
+          />
 
-        <TouchableOpacity style={styles.scanButton} onPress={() => setScanning(true)}>
-          <Text style={styles.scanButtonText}>Escanear Producto</Text>
-        </TouchableOpacity>
+          <ThemedButton
+            titulo="Escanear Producto"
+            icono="scan"
+            onPress={() => setScanning(true)}
+            style={{ marginBottom: 12 }}
+          />
 
-        <FlatList
-          data={carrito}
-          keyExtractor={(item, index) => index.toString()}
-          style={{ flex: 1, marginTop: 10 }}
-          renderItem={({ item }) => (
-            <View style={styles.card}>
-              <Text style={styles.nombre}>{item.nombre}</Text>
-              <Text style={styles.detalle}>{item.cantidad} x ${item.precio_unitario.toFixed(2)}</Text>
-              <Text style={styles.subtotal}>Subtotal: ${item.subtotal.toFixed(2)}</Text>
+          <Text style={[styles.etiquetaMetodo, { color: tema.textoSuave }]}>
+            MÉTODO DE PAGO
+          </Text>
+          <View style={styles.filaMetodos}>
+            {METODOS.map((m) => (
+              <ThemedChip
+                key={m}
+                etiqueta={m}
+                icono={
+                  m === 'efectivo'
+                    ? 'cash-outline'
+                    : m === 'tarjeta'
+                      ? 'card-outline'
+                      : m === 'transferencia'
+                        ? 'swap-horizontal'
+                        : 'phone-portrait-outline'
+                }
+                seleccionado={metodo === m}
+                onPress={() => setMetodo(m)}
+              />
+            ))}
+          </View>
+
+          <FlatList
+            data={items}
+            keyExtractor={(item) => item.producto_id.toString()}
+            style={{ flex: 1, marginTop: 12 }}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={{ paddingBottom: 20 }}
+            renderItem={({ item }) => (
+              <ThemedCard entering={false} style={styles.card}>
+                <View style={styles.cardHeader}>
+                  <Text style={[styles.nombre, { color: tema.texto }]} numberOfLines={1}>
+                    {item.nombre}
+                  </Text>
+                  <TouchableOpacity onPress={() => eliminar(item.producto_id)}>
+                    <Ionicons name="trash-outline" size={20} color={tema.peligro} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.cardFooter}>
+                  <View style={styles.stepper}>
+                    <TouchableOpacity
+                      onPress={() => cambiarCantidad(item.producto_id, item.cantidad - 1)}
+                      style={[styles.stepBoton, { backgroundColor: tema.primario }]}
+                    >
+                      <Ionicons name="remove" size={18} color={tema.primarioTexto} />
+                    </TouchableOpacity>
+                    <Text style={[styles.cantidad, { color: tema.texto }]}>{item.cantidad}</Text>
+                    <TouchableOpacity
+                      onPress={() => cambiarCantidad(item.producto_id, item.cantidad + 1)}
+                      disabled={item.cantidad >= item.stock}
+                      style={[
+                        styles.stepBoton,
+                        { backgroundColor: tema.primario },
+                        item.cantidad >= item.stock && { opacity: 0.4 },
+                      ]}
+                    >
+                      <Ionicons name="add" size={18} color={tema.primarioTexto} />
+                    </TouchableOpacity>
+                  </View>
+                  <Text style={[styles.subtotal, { color: tema.exito }]}>
+                    ${(item.cantidad * item.precio_unitario).toFixed(2)}
+                  </Text>
+                </View>
+
+                {item.cantidad >= item.stock && (
+                  <Text style={[styles.stockHint, { color: tema.advertencia }]}>
+                    Stock máximo: {item.stock}
+                  </Text>
+                )}
+              </ThemedCard>
+            )}
+            ListEmptyComponent={
+              <Text style={[styles.vacio, { color: tema.textoSuave }]}>
+                Carrito vacío. Escanea para vender.
+              </Text>
+            }
+          />
+
+          <View style={[styles.footer, { backgroundColor: tema.superficie, borderColor: tema.borde }]}>
+            <View>
+              <Text style={[styles.footerEtiqueta, { color: tema.textoSuave }]}>TOTAL</Text>
+              <Text style={[styles.total, { color: tema.texto }]}>${total.toFixed(2)}</Text>
             </View>
-          )}
-          ListEmptyComponent={<Text style={styles.empty}>Carrito vacío. Escanea para vender.</Text>}
-        />
+            {cobrando ? (
+              <ActivityIndicator size="large" color={tema.primario} />
+            ) : (
+              <ThemedButton
+                titulo="COBRAR"
+                icono="checkmark-circle"
+                onPress={handleCobrar}
+                disabled={items.length === 0}
+              />
+            )}
+          </View>
 
-        <View style={styles.footer}>
-          <Text style={styles.totalText}>TOTAL: ${total.toFixed(2)}</Text>
-          {loading ? (
-            <ActivityIndicator size="large" color="#fff" />
-          ) : (
-            <TouchableOpacity style={styles.cobrarButton} onPress={handleCobrar} disabled={carrito.length === 0}>
-              <Text style={styles.cobrarText}>COBRAR</Text>
-            </TouchableOpacity>
-          )}
+          <ScannerModal
+            visible={scanning}
+            onScan={handleScan}
+            onClose={() => setScanning(false)}
+          />
         </View>
-
-        <ScannerModal 
-          visible={scanning} 
-          onScan={handleScan} 
-          onClose={() => setScanning(false)} 
-        />
-      </View>
+      </ThemedScreen>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, backgroundColor: '#f5f5f5', marginTop: 30 },
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
-  title: { fontSize: 24, fontWeight: 'bold', color: '#333' },
-  closeButton: { backgroundColor: '#dc3545', width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-  closeText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
-  scanButton: { backgroundColor: '#007bff', padding: 15, borderRadius: 8, alignItems: 'center' },
-  scanButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  card: { backgroundColor: '#fff', padding: 15, borderRadius: 8, marginBottom: 10, elevation: 2 },
-  nombre: { fontSize: 18, fontWeight: 'bold', color: '#333' },
-  detalle: { fontSize: 14, color: '#666', marginTop: 2 },
-  subtotal: { fontSize: 16, fontWeight: 'bold', color: '#28a745', marginTop: 5, textAlign: 'right' },
-  empty: { textAlign: 'center', color: '#666', marginTop: 50, fontSize: 16 },
-  footer: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#343a40', padding: 20, borderRadius: 8 },
-  totalText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-  cobrarButton: { backgroundColor: '#28a745', paddingVertical: 15, paddingHorizontal: 30, borderRadius: 8 },
-  cobrarText: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
+  contenido: {
+    flex: 1,
+    padding: 20,
+  },
+  botonCerrar: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  etiquetaMetodo: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 1,
+    marginBottom: 8,
+  },
+  filaMetodos: {
+    flexDirection: 'row',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  card: {
+    padding: 14,
+    marginBottom: 10,
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+  },
+  nombre: {
+    fontSize: 16,
+    fontWeight: '700',
+    flex: 1,
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  stepBoton: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cantidad: {
+    fontSize: 18,
+    fontWeight: '800',
+    minWidth: 24,
+    textAlign: 'center',
+  },
+  subtotal: {
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  stockHint: {
+    fontSize: 12,
+    marginTop: 6,
+  },
+  vacio: {
+    textAlign: 'center',
+    marginTop: 50,
+    fontSize: 16,
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 18,
+    padding: 16,
+    marginTop: 10,
+  },
+  footerEtiqueta: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  total: {
+    fontSize: 26,
+    fontWeight: '800',
+  },
 });

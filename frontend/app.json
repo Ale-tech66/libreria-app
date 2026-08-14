@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "frontend_expo",
-    "slug": "frontend_expo",
-    "version": "1.0.0",
+    "name": "Librería",
+    "slug": "libreria-app",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontendexpo",
+    "scheme": "libreria",
     "userInterfaceStyle": "automatic",
-   
+
     "ios": {
       "icon": "./assets/expo.icon"
     },
@@ -18,9 +18,10 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-
       "permissions": [
-        "android.permission.CAMERA"
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE"
       ],
       "predictiveBackGestureEnabled": false,
       "package": "com.alejondro.frontend_expo"
@@ -38,6 +39,12 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "La app necesita acceso a tus fotos para agregar imágenes de productos."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#208AEF",
@@ -52,6 +59,7 @@
     },
     "extra": {
       "router": {},
+      "apiUrl": "https://libreria-api-4lr3.onrender.com",
       "eas": {
         "projectId": "04e8b2d4-7e48-4d90-8a6c-31b254511670"
       }

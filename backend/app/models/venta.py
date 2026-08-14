@@ -25,3 +25,4 @@ class VentaDetalle(Base):
     
     # Relación inversa
     venta = relationship("Venta", back_populates="detalles")
+    producto = relationship("Producto")

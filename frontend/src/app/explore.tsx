@@ -1,202 +1,416 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, FlatList, StyleSheet, ActivityIndicator, TouchableOpacity } from 'react-native';
-import { getProductos } from '../api';
-import ScannerModal from '../components/ScannerModal'; 
-import { buscarProductoPorCodigo } from '../api';
-import ProductoFormModal from '../components/ProductoFormModal'; 
-import { RefreshControl } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import React, { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import Animated, { FadeIn } from 'react-native-reanimated';
+
+import { API_URL } from '@/api/client';
+import { buscarProductoPorCodigo, desactivarProducto } from '@/api/productos';
+import ProductoFormModal from '@/components/ProductoFormModal';
+import ScannerModal from '@/components/ScannerModal';
+import { ThemedCard, ThemedHeader, ThemedInput, ThemedScreen } from '@/design/components';
+import { useTheme } from '@/design/ThemeContext';
+import { useAuth } from '@/hooks/useAuth';
+import { useProductos } from '@/hooks/useProductos';
+import { Producto } from '@/types';
+
+const STOCK_BAJO = 5;
 
 export default function InventarioScreen() {
-  const [productos, setProductos] = useState<any[]>([]);
-  const [productoEditar, setProductoEditar] = useState<any | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
+  const puedeGestionar = user?.rol === 'admin' || user?.rol === 'inventario';
+  const {
+    productos,
+    total,
+    loading,
+    refreshing,
+    loadingMore,
+    error,
+    query,
+    buscar,
+    onRefresh,
+    loadMore,
+  } = useProductos(puedeGestionar);
+
+  const { tema } = useTheme();
   const [scanning, setScanning] = useState(false);
-  const [showForm, setShowForm] = useState(false); 
-  const [refreshing, setRefreshing] = useState(false);
-  const [rol, setRol] = useState('');
-  const [scannedCode, setScannedCode] = useState(''); 
+  const [showForm, setShowForm] = useState(false);
+  const [scannedCode, setScannedCode] = useState('');
+  const [productoEditar, setProductoEditar] = useState<Producto | null>(null);
 
-  useEffect(() => {
-    cargarProductos();
-    const getRol = async () => {
-      const savedRol = await AsyncStorage.getItem('rol');
-      if (savedRol) setRol(savedRol);
-    };
-    getRol();
-  }, []);
-
-  const cargarProductos = async () => {
-    setLoading(true);
+  const handleBarCodeScanned = async (data: string) => {
+    setScanning(false);
     try {
-      const data = await getProductos();
-      setProductos(data);
-    } catch (error: any) {
-      console.error(error);
-    } finally {
-      setLoading(false);
+      const producto = await buscarProductoPorCodigo(data);
+      setScannedCode(data);
+      setProductoEditar(producto);
+      setShowForm(true);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Error al buscar el producto');
     }
   };
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await cargarProductos();
-    setRefreshing(false);
-  };
-
-  const handleBarCodeScanned = async (data: string) => {
-    setScanning(false); // Apagamos la cámara
-    
-    try {
-      const producto = await buscarProductoPorCodigo(data);
-      
-      if (producto) {
-        // Si existe, preparamos para editar
-        setScannedCode(data);
-        setProductoEditar(producto);
-        setShowForm(true);
-      } else {
-        // Si no existe, preparamos para crear
-        setScannedCode(data);
-        setProductoEditar(null);
-        setShowForm(true);
-      }
-    } catch (error: any) {
-      alert(error.message);
+  const toggleActivo = (producto: Producto) => {
+    if (producto.activo) {
+      Alert.alert(
+        'Desactivar producto',
+        `"${producto.nombre}" dejará de venderse. ¿Continuar?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Desactivar',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await desactivarProducto(producto.id);
+                onRefresh();
+              } catch (e) {
+                Alert.alert('Error', e instanceof Error ? e.message : 'Error');
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      Alert.alert(
+        'Reactivar producto',
+        `"${producto.nombre}" volverá a estar disponible. ¿Continuar?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Reactivar',
+            onPress: () => {
+              setProductoEditar(producto);
+              setShowForm(true);
+            },
+          },
+        ]
+      );
     }
   };
 
   if (loading) {
     return (
-      <View style={styles.center}>
-        <ActivityIndicator size="large" color="#007bff" />
-      </View>
+      <ThemedScreen>
+        <View style={styles.center}>
+          <ActivityIndicator size="large" color={tema.primario} />
+        </View>
+      </ThemedScreen>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Inventario</Text>
-        {(rol === 'admin' || rol === 'inventario') && (
-          <TouchableOpacity 
-            style={styles.scanButton}
-            onPress={() => setScanning(true)}
+    <ThemedScreen>
+      <View style={styles.contenido}>
+        <ThemedHeader
+          titulo="Inventario"
+          subtitulo={`${total} producto(s)`}
+          derecho={
+            puedeGestionar && (
+              <TouchableOpacity
+                onPress={() => setScanning(true)}
+                style={[styles.botonEscanear, { backgroundColor: tema.primario }]}
+              >
+                <Ionicons name="scan" size={20} color={tema.primarioTexto} />
+                <Text style={[styles.botonEscanearTexto, { color: tema.primarioTexto }]}>
+                  Escanear
+                </Text>
+              </TouchableOpacity>
+            )
+          }
+        />
+
+        <ThemedInput
+          icono="search"
+          placeholder="Buscar por nombre o código..."
+          value={query}
+          onChangeText={buscar}
+          autoCapitalize="none"
+          autoCorrect={false}
+        />
+
+        {error && (
+          <View
+            style={[
+              styles.errorBox,
+              { backgroundColor: tema.superficie, borderColor: tema.peligro },
+            ]}
           >
-            <Text style={styles.scanButtonText}>Escanear</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      
-      <FlatList
-        data={productos}
-        keyExtractor={(item) => item.id.toString()}
-        renderItem={({ item }) => (
-          <View style={styles.card}>
-            <Text style={styles.nombre}>{item.nombre}</Text>
-            <Text style={styles.detalle}>Autor: {item.autor || 'N/A'}</Text>
-            <Text style={styles.detalle}>Código: {item.codigo_barras}</Text>
-            <View style={styles.footerCard}>
-              <Text style={styles.precio}>${item.precio_venta}</Text>
-              <Text style={styles.stock}>Stock: {item.stock}</Text>
-            </View>
+            <Text style={[styles.errorTexto, { color: tema.peligro }]}>{error}</Text>
+            <TouchableOpacity onPress={onRefresh}>
+              <Text style={[styles.reintentar, { color: tema.primario }]}>Reintentar</Text>
+            </TouchableOpacity>
           </View>
         )}
-        ListEmptyComponent={<Text>No hay productos registrados.</Text>}
 
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            colors={["#007bff"]} // Color del circulito en Android
-          />
-        }
-      />
+        <FlatList
+          data={productos}
+          keyExtractor={(item) => item.id.toString()}
+          contentContainerStyle={{ paddingBottom: 90 }}
+          showsVerticalScrollIndicator={false}
+          renderItem={({ item, index }) => (
+            <Animated.View entering={FadeIn.delay(Math.min(index, 8) * 40).duration(300)}>
+              <TarjetaProducto
+                producto={item}
+                editable={puedeGestionar}
+                onToggle={() => toggleActivo(item)}
+                onPress={() => {
+                  if (puedeGestionar) {
+                    setScannedCode(item.codigo_barras);
+                    setProductoEditar(item);
+                    setShowForm(true);
+                  }
+                }}
+              />
+            </Animated.View>
+          )}
+          ListEmptyComponent={
+            <Text style={[styles.vacio, { color: tema.textoSuave }]}>
+              {query ? 'Sin resultados para la búsqueda.' : 'No hay productos registrados.'}
+            </Text>
+          }
+          ListFooterComponent={
+            loadingMore ? (
+              <ActivityIndicator style={{ margin: 16 }} color={tema.primario} />
+            ) : null
+          }
+          onEndReached={loadMore}
+          onEndReachedThreshold={0.4}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={[tema.primario]}
+              tintColor={tema.primario}
+            />
+          }
+        />
 
-            {/* Usamos nuestro componente limpio */}
-      <ScannerModal 
-        visible={scanning} 
-        onScan={handleBarCodeScanned} 
-        onClose={() => setScanning(false)} 
-      />
+        <ScannerModal
+          visible={scanning}
+          onScan={handleBarCodeScanned}
+          onClose={() => setScanning(false)}
+        />
 
-      {/* Formulario de registro */}
-            {/* Formulario de registro/edición */}
-      <ProductoFormModal 
-        visible={showForm}
-        codigoBarras={scannedCode}
-        productoEditar={productoEditar}
-        onClose={() => {
-          setShowForm(false);
-          setProductoEditar(null); // Limpiar al cerrar
-        }}
-        onProductoGuardado={cargarProductos} // Recarga la lista
-      />
-    </View>
+        <ProductoFormModal
+          visible={showForm}
+          codigoBarras={scannedCode}
+          productoEditar={productoEditar}
+          onClose={() => {
+            setShowForm(false);
+            setProductoEditar(null);
+          }}
+          onProductoGuardado={onRefresh}
+        />
+      </View>
+    </ThemedScreen>
+  );
+}
+
+function TarjetaProducto({
+  producto,
+  editable,
+  onToggle,
+  onPress,
+}: {
+  producto: Producto;
+  editable: boolean;
+  onToggle: () => void;
+  onPress: () => void;
+}) {
+  const { tema } = useTheme();
+  const stockBajo = producto.activo && producto.stock <= STOCK_BAJO;
+  const uri = producto.foto ? `${API_URL}/uploads/${producto.foto}` : null;
+
+  return (
+    <ThemedCard
+      entering={false}
+      style={[
+        styles.card,
+        !producto.activo && { opacity: 0.55 },
+        stockBajo && { borderColor: tema.advertencia, borderWidth: 1.5 },
+      ]}
+    >
+      <TouchableOpacity onPress={onPress} activeOpacity={editable ? 0.8 : 1} style={styles.cardCuerpo}>
+        {uri ? (
+          <Image source={{ uri }} style={styles.foto} contentFit="cover" />
+        ) : (
+          <View style={[styles.foto, styles.sinFoto, { backgroundColor: tema.superficie }]}>
+            <Ionicons name="book-outline" size={30} color={tema.textoSuave} />
+          </View>
+        )}
+
+        <View style={styles.cardInfo}>
+          <Text style={[styles.nombre, { color: tema.texto }]} numberOfLines={2}>
+            {producto.nombre}
+          </Text>
+          <Text style={[styles.detalle, { color: tema.textoSuave }]}>
+            {producto.autor || 'Autor N/A'}
+          </Text>
+          <Text style={[styles.detalle, { color: tema.textoSuave }]}>
+            Código: {producto.codigo_barras}
+          </Text>
+
+          <View style={styles.filaInferior}>
+            <Text style={[styles.precio, { color: tema.exito }]}>
+              ${producto.precio_venta.toFixed(2)}
+            </Text>
+            <View style={styles.insignias}>
+              {stockBajo && (
+                <View style={[styles.insignia, { backgroundColor: tema.advertencia }]}>
+                  <Text style={styles.insigniaTexto}>Stock bajo</Text>
+                </View>
+              )}
+              <View
+                style={[
+                  styles.insignia,
+                  {
+                    backgroundColor:
+                      producto.stock === 0 ? tema.peligro : tema.superficie,
+                  },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.insigniaTexto,
+                    { color: producto.stock === 0 ? '#fff' : tema.texto },
+                  ]}
+                >
+                  Stock: {producto.stock}
+                </Text>
+              </View>
+              {!producto.activo && (
+                <View style={[styles.insignia, { backgroundColor: tema.textoSuave }]}>
+                  <Text style={styles.insigniaTexto}>Inactivo</Text>
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+
+        {editable && (
+          <TouchableOpacity onPress={onToggle} style={styles.botonToggle}>
+            <Ionicons
+              name={producto.activo ? 'eye-off-outline' : 'eye-outline'}
+              size={22}
+              color={producto.activo ? tema.peligro : tema.exito}
+            />
+          </TouchableOpacity>
+        )}
+      </TouchableOpacity>
+    </ThemedCard>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  contenido: {
     flex: 1,
     padding: 20,
-    backgroundColor: '#f5f5f5',
   },
   center: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  header: {
+  botonEscanear: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 14,
+  },
+  botonEscanearTexto: {
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  errorBox: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 15,
   },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#333',
+  errorTexto: {
+    flex: 1,
   },
-  scanButton: {
-    backgroundColor: '#007bff',
-    padding: 10,
-    borderRadius: 8,
-  },
-  scanButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
+  reintentar: {
+    fontWeight: '700',
+    marginLeft: 10,
   },
   card: {
-    backgroundColor: '#fff',
-    padding: 15,
-    borderRadius: 8,
-    marginBottom: 10,
-    elevation: 2,
+    marginBottom: 12,
+  },
+  cardCuerpo: {
+    flexDirection: 'row',
+    padding: 14,
+    gap: 12,
+  },
+  foto: {
+    width: 64,
+    height: 84,
+    borderRadius: 10,
+  },
+  sinFoto: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cardInfo: {
+    flex: 1,
   },
   nombre: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 16,
+    fontWeight: '700',
   },
   detalle: {
-    fontSize: 14,
-    color: '#666',
+    fontSize: 13,
     marginTop: 2,
   },
-  footerCard: {
+  filaInferior: {
     flexDirection: 'row',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 10,
+    marginTop: 8,
+    gap: 8,
   },
   precio: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#28a745',
+    fontSize: 17,
+    fontWeight: '800',
   },
-  stock: {
-    fontSize: 14,
-    color: '#dc3545',
-    fontWeight: 'bold',
+  insignias: {
+    flexDirection: 'row',
+    gap: 6,
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+  },
+  insignia: {
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 9,
+  },
+  insigniaTexto: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  botonToggle: {
+    alignSelf: 'flex-start',
+    padding: 6,
+  },
+  vacio: {
+    textAlign: 'center',
+    marginTop: 50,
+    fontSize: 16,
   },
 });

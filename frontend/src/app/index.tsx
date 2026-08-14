@@ -1,201 +1,301 @@
-import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
-import { loginUser } from '../api';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import VentasModal from '../components/VentasModal';
-import HistorialModal from '../components/HistorialModal';
+import { Ionicons } from '@expo/vector-icons';
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, StyleSheet, Text, View } from 'react-native';
+import Animated, {
+  FadeIn,
+  FadeInDown,
+  FadeOut,
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+} from 'react-native-reanimated';
+
+import HistorialModal from '@/components/HistorialModal';
+import VentasModal from '@/components/VentasModal';
+import {
+  ThemedButton,
+  ThemedCard,
+  ThemedChip,
+  ThemedHeader,
+  ThemedInput,
+  ThemedScreen,
+} from '@/design/components';
+import { useTheme } from '@/design/ThemeContext';
+import { useAuth } from '@/hooks/useAuth';
+import { ThemeId } from '@/design/themes';
 
 export default function HomeScreen() {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('123456');
-  const [loading, setLoading] = useState(false);
-  const [isLogged, setIsLogged] = useState(false);
+  const { user, ready, loading, login, logout } = useAuth();
+  const { tema } = useTheme();
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [showVentas, setShowVentas] = useState(false);
   const [showHistorial, setShowHistorial] = useState(false);
-  const [rol, setRol] = useState('');
+  const [exito, setExito] = useState(false);
+  const anteriorUsuario = useRef(user);
 
+  // Animación de éxito al iniciar sesión
   useEffect(() => {
-    checkLogin();
-    const getRol = async () => {
-      const savedRol = await AsyncStorage.getItem('rol');
-      if (savedRol) setRol(savedRol);
-    };
-    getRol();
-  }, []);
-
-  const checkLogin = async () => {
-    const token = await AsyncStorage.getItem('token');
-    const savedRol = await AsyncStorage.getItem('rol');
-    if (token) {
-      setIsLogged(true);
-      setRol(savedRol || '');
+    if (user && !anteriorUsuario.current) {
+      setExito(true);
+      const t = setTimeout(() => setExito(false), 1400);
+      return () => clearTimeout(t);
     }
-  };
+    anteriorUsuario.current = user;
+  }, [user]);
 
-  const decodeBase64 = (value: string) => {
-    if (typeof globalThis.atob === 'function') {
-      return globalThis.atob(value);
-    }
-
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-    let result = '';
-    let buffer = 0;
-    let bits = 0;
-
-    for (let i = 0; i < value.length; i += 1) {
-      const idx = chars.indexOf(value[i]);
-      if (idx === -1) continue;
-      buffer = (buffer << 6) | idx;
-      bits += 6;
-      if (bits >= 8) {
-        bits -= 8;
-        result += String.fromCharCode((buffer >> bits) & 0xff);
-      }
-    }
-
-    return result;
-  };
+  if (!ready) return null;
 
   const handleLogin = async () => {
-    setLoading(true);
+    if (!username.trim() || !password) {
+      setError('Ingresa usuario y contraseña');
+      return;
+    }
+    setError(null);
     try {
-      const data = await loginUser(username, password);
-      await AsyncStorage.setItem('token', data.access_token);
-      
-      const parts = data.access_token.split('.');
-      const payload = parts.length >= 2 ? JSON.parse(decodeBase64(parts[1])) : { rol: '' };
-      const rolValue = payload?.rol ?? '';
-      await AsyncStorage.setItem('rol', rolValue);
-      
-      setIsLogged(true);
-      setRol(rolValue);
-    } catch (error: any) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setLoading(false);
+      await login(username.trim(), password);
+      setUsername('');
+      setPassword('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al iniciar sesión');
     }
   };
 
-  const handleLogout = async () => {
-    await AsyncStorage.clear();
-    setIsLogged(false);
-    setRol('');
-  };
-
-  if (isLogged) {
+  if (!user) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.title}>¡Bienvenido!</Text>
-        <Text style={styles.subtitle}>Tu rol es: {rol}</Text>
-        
-        {(rol === 'admin' || rol === 'ventas') && (
-          <TouchableOpacity 
-            style={[styles.button, { backgroundColor: '#28a745', marginTop: 20 }]} 
-            onPress={() => setShowVentas(true)}
+      <ThemedScreen>
+        <View style={styles.loginContenedor}>
+          <SelectorTemas />
+
+          <Animated.View
+            entering={FadeInDown.duration(600).delay(150)}
+            style={[styles.logo, { backgroundColor: tema.primario }]}
           >
-            <Text style={styles.buttonText}>IR A PUNTO DE VENTA</Text>
-          </TouchableOpacity>
-        )}
+            <Ionicons name="library" size={52} color={tema.primarioTexto} />
+          </Animated.View>
+          <Text style={[styles.tituloLogin, { color: tema.texto }]}>Librería</Text>
+          <Text style={[styles.subtituloLogin, { color: tema.textoSuave }]}>
+            Punto de venta e inventario
+          </Text>
 
-        {rol === 'admin' && (
-          <TouchableOpacity 
-            style={[styles.button, { backgroundColor: '#007bff', marginTop: 10 }]} 
-            onPress={() => setShowHistorial(true)}
-          >
-            <Text style={styles.buttonText}>VER HISTORIAL DE VENTAS</Text>
-          </TouchableOpacity>
-        )}
-
-        <TouchableOpacity 
-          style={[styles.button, { backgroundColor: '#dc3545', marginTop: 10 }]} 
-          onPress={handleLogout}
-        >
-          <Text style={styles.buttonText}>CERRAR SESIÓN</Text>
-        </TouchableOpacity>
-
-        <VentasModal 
-          visible={showVentas} 
-          onClose={() => setShowVentas(false)} 
-        />
-
-        <HistorialModal 
-          visible={showHistorial} 
-          onClose={() => setShowHistorial(false)} 
-        />
-      </View>
+          <ThemedCard style={styles.loginCard} delay={250}>
+            <ThemedInput
+              icono="person-outline"
+              placeholder="Usuario"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={username}
+              onChangeText={setUsername}
+            />
+            <ThemedInput
+              icono="lock-closed-outline"
+              placeholder="Contraseña"
+              secureTextEntry
+              value={password}
+              onChangeText={setPassword}
+            />
+            {error && (
+              <Text style={[styles.errorTexto, { color: tema.peligro }]}>{error}</Text>
+            )}
+            <ThemedButton
+              titulo="INGRESAR"
+              icono="log-in-outline"
+              onPress={handleLogin}
+              loading={loading}
+              style={{ marginTop: 6 }}
+            />
+          </ThemedCard>
+        </View>
+      </ThemedScreen>
     );
   }
 
+  const puedeVender = user.rol === 'admin' || user.rol === 'ventas';
+  const puedeHistorial = user.rol === 'admin';
+
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Librería App</Text>
-      
-      <TextInput
-        style={styles.input}
-        placeholder="Usuario"
-        value={username}
-        onChangeText={setUsername}
-      />
-      
-      <TextInput
-        style={styles.input}
-        placeholder="Contraseña"
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-      
-      <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
-        {loading ? (
-          <ActivityIndicator color="#fff" />
-        ) : (
-          <Text style={styles.buttonText}>INGRESAR</Text>
+    <ThemedScreen scroll>
+      <Animated.View entering={FadeIn.duration(400)}>
+        <ThemedHeader
+          titulo="¡Bienvenido!"
+          subtitulo={`Sesión iniciada como ${user.username}`}
+          derecho={
+            <ThemedChip etiqueta={user.rol} seleccionado icono="shield-checkmark" onPress={() => {}} />
+          }
+        />
+
+        <ThemedCard style={styles.rolCard} delay={100}>
+          <Ionicons name="book" size={34} color={tema.primario} />
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rolTitulo, { color: tema.texto }]}>Librería App</Text>
+            <Text style={[styles.rolSubtitulo, { color: tema.textoSuave }]}>
+              Tu rol es {user.rol}. Elige una opción:
+            </Text>
+          </View>
+        </ThemedCard>
+
+        {puedeVender && (
+          <ThemedButton
+            titulo="PUNTO DE VENTA"
+            icono="cart"
+            onPress={() => setShowVentas(true)}
+            style={styles.botonAccion}
+          />
         )}
-      </TouchableOpacity>
+
+        {puedeHistorial && (
+          <ThemedButton
+            titulo="HISTORIAL DE VENTAS"
+            icono="time"
+            variante="secundario"
+            onPress={() => setShowHistorial(true)}
+            style={styles.botonAccion}
+          />
+        )}
+
+        <ThemedButton
+          titulo="CERRAR SESIÓN"
+          icono="exit"
+          variante="peligro"
+          onPress={() => {
+            Alert.alert('Cerrar sesión', '¿Seguro que quieres salir?', [
+              { text: 'Cancelar', style: 'cancel' },
+              { text: 'Salir', style: 'destructive', onPress: logout },
+            ]);
+          }}
+          style={styles.botonAccion}
+        />
+
+        <VentasModal visible={showVentas} onClose={() => setShowVentas(false)} />
+        <HistorialModal visible={showHistorial} onClose={() => setShowHistorial(false)} />
+      </Animated.View>
+
+      {exito && <OverlayExito />}
+    </ThemedScreen>
+  );
+}
+
+function SelectorTemas() {
+  const { tema, temas, setTemaId } = useTheme();
+  return (
+    <View style={styles.temas}>
+      {temas.map((t) => (
+        <ThemedChip
+          key={t.id}
+          etiqueta={t.nombre}
+          seleccionado={tema.id === t.id}
+          onPress={() => setTemaId(t.id as ThemeId)}
+        />
+      ))}
     </View>
   );
 }
 
+function OverlayExito() {
+  const { tema } = useTheme();
+  const escala = useSharedValue(0.2);
+  const opacidad = useSharedValue(0);
+
+  useEffect(() => {
+    escala.value = withSpring(1, { damping: 9, stiffness: 140 });
+    opacidad.value = withSpring(1, { damping: 12 });
+  }, [escala, opacidad]);
+
+  const estilos = useAnimatedStyle(() => ({
+    transform: [{ scale: escala.value }],
+    opacity: opacidad.value,
+  }));
+
+  return (
+    <Animated.View
+      exiting={FadeOut.duration(500)}
+      pointerEvents="none"
+      style={[StyleSheet.absoluteFill, styles.overlayExito, { backgroundColor: tema.fondo[0] }]}
+    >
+      <Animated.View
+        style={[styles.check, { backgroundColor: tema.exito }, estilos]}
+      >
+        <Ionicons name="checkmark" size={54} color="#ffffff" />
+      </Animated.View>
+      <Text style={[styles.checkTexto, { color: tema.texto }]}>Sesión iniciada</Text>
+    </Animated.View>
+  );
+}
+
 const styles = StyleSheet.create({
-  container: {
+  loginContenedor: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
     alignItems: 'center',
     justifyContent: 'center',
+    padding: 24,
+  },
+  temas: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 24,
+    maxWidth: 330,
+  },
+  logo: {
+    width: 96,
+    height: 96,
+    borderRadius: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 14,
+  },
+  tituloLogin: {
+    fontSize: 34,
+    fontWeight: '800',
+  },
+  subtituloLogin: {
+    fontSize: 15,
+    marginBottom: 28,
+  },
+  loginCard: {
+    width: '100%',
     padding: 20,
+    gap: 4,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    marginBottom: 20,
-    color: '#333',
+  errorTexto: {
+    fontSize: 13,
+    marginBottom: 8,
+    textAlign: 'center',
   },
-  subtitle: {
+  rolCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 18,
+    marginBottom: 14,
+  },
+  rolTitulo: {
     fontSize: 18,
-    marginBottom: 20,
-    color: '#666',
+    fontWeight: '700',
   },
-  input: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#fff',
-    borderRadius: 8,
-    paddingHorizontal: 15,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: '#ddd',
+  rolSubtitulo: {
+    fontSize: 13,
+    marginTop: 2,
   },
-  button: {
-    width: '100%',
-    height: 50,
-    backgroundColor: '#007bff',
-    borderRadius: 8,
+  botonAccion: {
+    marginBottom: 12,
+  },
+  overlayExito: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 18,
+  },
+  check: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: 'bold',
+  checkTexto: {
+    fontSize: 20,
+    fontWeight: '700',
   },
 });

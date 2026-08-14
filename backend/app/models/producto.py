@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Numeric
+from sqlalchemy import Boolean, Column, Integer, Numeric, String
 from app.core.database import Base
 
 class Producto(Base):
@@ -12,4 +12,5 @@ class Producto(Base):
     precio_venta = Column(Numeric(10, 2), nullable=False)
     stock = Column(Integer, default=0)
     unidades_por_caja = Column(Integer, default=1)
-    
+    foto = Column(String(255), nullable=True) # Nombre del archivo subido
+    activo = Column(Boolean, default=True)    # Soft delete
