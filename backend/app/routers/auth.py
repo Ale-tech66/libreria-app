@@ -7,7 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role
+from app.core.deps import get_current_user, get_current_user_optional, require_role
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.models.user import User
 from app.schemas import Token, UserCreate, UserOut, UserUpdate
@@ -44,9 +44,24 @@ def _register_failure(username: str) -> None:
 def register(
     user: UserCreate,
     db: Session = Depends(get_db),
-    _: User = Depends(require_role("admin")),
+    admin: User | None = Depends(get_current_user_optional),
 ):
-    """Crea un usuario. Solo administradores."""
+    """Crea un usuario.
+
+    El PRIMER usuario registrado se convierte en administrador (bootstrap).
+    A partir de ahí, solo los administradores pueden crear usuarios:
+    los empleados inician sesión con la cuenta que su admin les creó.
+    """
+    if db.query(User).count() == 0:
+        rol = "admin"
+    else:
+        if admin is None or admin.rol != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo un administrador puede crear usuarios. Contacta a tu administrador.",
+            )
+        rol = user.rol
+
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
@@ -54,7 +69,7 @@ def register(
     new_user = User(
         username=user.username,
         hashed_password=get_password_hash(user.password),
-        rol=user.rol,
+        rol=rol,
     )
     db.add(new_user)
     db.commit()

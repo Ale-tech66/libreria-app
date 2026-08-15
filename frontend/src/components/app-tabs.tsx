@@ -24,13 +24,16 @@ export default function AppTabs({ rol }: AppTabsProps) {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarStyle: [
-          styles.tabBar,
-          {
-            backgroundColor: tema.estilo === 'neumorfo' ? tema.superficie : 'rgba(0,0,0,0.25)',
-            borderTopColor: tema.borde,
-          },
-        ],
+        tabBarStyle: !rol
+          ? styles.oculto
+          : [
+              styles.tabBar,
+              {
+                backgroundColor:
+                  tema.estilo === 'neumorfo' ? tema.superficie : 'rgba(0,0,0,0.25)',
+                borderTopColor: tema.borde,
+              },
+            ],
         tabBarActiveTintColor: tema.primario,
         tabBarInactiveTintColor: tema.textoSuave,
         tabBarLabelStyle: styles.tabLabel,
@@ -41,15 +44,18 @@ export default function AppTabs({ rol }: AppTabsProps) {
       {esAdmin && (
         <Tabs.Screen name="reportes" options={opciones('Reportes', 'stats-chart')} />
       )}
+      <Tabs.Screen name="ajustes" options={opciones('Ajustes', 'settings')} />
       {esAdmin && (
         <Tabs.Screen name="usuarios" options={opciones('Usuarios', 'people')} />
       )}
-      <Tabs.Screen name="ajustes" options={opciones('Ajustes', 'settings')} />
     </Tabs>
   );
 }
 
 const styles = StyleSheet.create({
+  oculto: {
+    display: 'none',
+  },
   tabBar: {
     borderTopWidth: 1,
     position: 'absolute',

@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.models.user import User
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+oauth2_scheme_optional = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
@@ -30,6 +31,25 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario desactivado",
         )
+    return user
+
+def get_current_user_optional(
+    token: str | None = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+) -> User | None:
+    """Igual que get_current_user pero devuelve None sin token o token inválido."""
+    if not token:
+        return None
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+    except JWTError:
+        return None
+    user = db.query(User).filter(User.username == username).first()
+    if user is None or not user.activo:
+        return None
     return user
 
 def require_role(*roles: str):

@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useRef, useState } from 'react';
-import { Alert, StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Animated, {
   FadeIn,
   FadeInDown,
@@ -11,6 +11,8 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import HistorialModal from '@/components/HistorialModal';
+import RecuperarModal from '@/components/RecuperarModal';
+import RegistroModal from '@/components/RegistroModal';
 import VentasModal from '@/components/VentasModal';
 import {
   ThemedButton,
@@ -32,6 +34,8 @@ export default function HomeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [showVentas, setShowVentas] = useState(false);
   const [showHistorial, setShowHistorial] = useState(false);
+  const [showRegistro, setShowRegistro] = useState(false);
+  const [showRecuperar, setShowRecuperar] = useState(false);
   const [exito, setExito] = useState(false);
   const anteriorUsuario = useRef(user);
 
@@ -106,6 +110,23 @@ export default function HomeScreen() {
               style={{ marginTop: 6 }}
             />
           </ThemedCard>
+
+          <View style={styles.links}>
+            <TouchableOpacity onPress={() => setShowRecuperar(true)}>
+              <Text style={[styles.link, { color: tema.primario }]}>
+                ¿Olvidaste tu contraseña?
+              </Text>
+            </TouchableOpacity>
+            <View style={[styles.separador, { backgroundColor: tema.borde }]} />
+            <TouchableOpacity onPress={() => setShowRegistro(true)}>
+              <Text style={[styles.link, { color: tema.primario }]}>
+                ¿No tienes cuenta? Regístrate
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <RegistroModal visible={showRegistro} onClose={() => setShowRegistro(false)} />
+          <RecuperarModal visible={showRecuperar} onClose={() => setShowRecuperar(false)} />
         </View>
       </ThemedScreen>
     );
@@ -258,6 +279,22 @@ const styles = StyleSheet.create({
     width: '100%',
     padding: 20,
     gap: 4,
+  },
+  links: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 16,
+  },
+  link: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  separador: {
+    width: 1,
+    height: 16,
   },
   errorTexto: {
     fontSize: 13,

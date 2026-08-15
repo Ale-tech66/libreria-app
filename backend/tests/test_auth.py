@@ -2,12 +2,21 @@ from tests.conftest import auth
 
 
 class TestRegistro:
-    def test_register_requiere_admin(self, client):
+    def test_register_primer_usuario_es_admin(self, client):
+        response = client.post(
+            "/auth/register",
+            json={"username": "fundador", "password": "123456", "rol": "ventas"},
+        )
+        assert response.status_code == 200
+        assert response.json()["rol"] == "admin"
+
+    def test_register_requiere_admin_si_hay_usuarios(self, client, crear_usuario):
+        crear_usuario("existente", "123456", "ventas")
         response = client.post(
             "/auth/register",
             json={"username": "hacker", "password": "123456", "rol": "admin"},
         )
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     def test_register_con_admin(self, client, admin_token):
         response = client.post(
