@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
-import React from 'react';
+import React, { useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import MfaConfigModal from '@/components/MfaConfigModal';
 import { ThemedButton, ThemedCard, ThemedHeader, ThemedScreen } from '@/design/components';
 import { useTheme } from '@/design/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
@@ -11,6 +12,7 @@ import { Theme, ThemeId } from '@/design/themes';
 export default function AjustesScreen() {
   const { tema, temas, setTemaId } = useTheme();
   const { user, logout } = useAuth();
+  const [showMfa, setShowMfa] = useState(false);
 
   return (
     <ThemedScreen scroll>
@@ -28,6 +30,32 @@ export default function AjustesScreen() {
             />
           ))}
         </View>
+
+        <Text style={[styles.seccion, { color: tema.textoSuave }]}>SEGURIDAD</Text>
+        <ThemedCard style={styles.tarjetaCuenta}>
+          <View style={[styles.avatar, { backgroundColor: tema.primario }]}>
+            <Ionicons
+              name={user?.mfa_activo ? 'shield-checkmark' : 'shield-outline'}
+              size={26}
+              color={tema.primarioTexto}
+            />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.usuario, { color: tema.texto }]}>
+              Verificación en dos pasos
+            </Text>
+            <Text style={[styles.rol, { color: tema.textoSuave }]}>
+              {user?.mfa_activo ? 'Activado' : 'Desactivado'}
+            </Text>
+          </View>
+          <ThemedButton
+            titulo={user?.mfa_activo ? 'Configurar' : 'Activar'}
+            icono={user?.mfa_activo ? 'settings-outline' : 'shield-checkmark'}
+            variante={user?.mfa_activo ? 'secundario' : 'primario'}
+            onPress={() => setShowMfa(true)}
+            style={{ minHeight: 40, paddingVertical: 8, paddingHorizontal: 14 }}
+          />
+        </ThemedCard>
 
         <Text style={[styles.seccion, { color: tema.textoSuave }]}>CUENTA</Text>
         <ThemedCard style={styles.tarjetaCuenta}>
@@ -58,9 +86,11 @@ export default function AjustesScreen() {
         />
 
         <Text style={[styles.version, { color: tema.textoSuave }]}>
-          Librería App · Versión 1.1.0
+          Librería App · Versión 1.2.0
         </Text>
       </View>
+
+      <MfaConfigModal visible={showMfa} onClose={() => setShowMfa(false)} />
     </ThemedScreen>
   );
 }

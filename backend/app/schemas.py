@@ -36,6 +36,7 @@ class UserOut(BaseModel):
     rol: str
     activo: bool
     organizacion: Optional[str] = None
+    mfa_activo: Optional[bool] = None
 
     @field_validator("organizacion", mode="before")
     @classmethod
@@ -56,6 +57,32 @@ class Token(BaseModel):
 
 class RefreshRequest(BaseModel):
     refresh_token: str = Field(min_length=20)
+
+
+# ─────────────────────────────── MFA (TOTP) ───────────────────────────────
+
+
+class MfaRequired(BaseModel):
+    mfa_required: bool
+    mfa_token: str
+    token_type: str
+
+
+LoginResponse = Token | MfaRequired
+
+
+class MfaConfirmRequest(BaseModel):
+    mfa_token: str
+    code: str = Field(min_length=6, max_length=6)
+
+
+class MfaCodeRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6)
+
+
+class MfaSetupOut(BaseModel):
+    otpauth_url: str
+    secret: str
 
 
 # ─────────────────────────────── Productos ───────────────────────────────

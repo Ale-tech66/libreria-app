@@ -1,9 +1,9 @@
 import { api, getErrorMessage } from './client';
-import { LoginResponse, User } from '../types';
+import { LoginResponse, LoginResult, MfaRequired, MfaSetupResult, User } from '../types';
 
-export async function login(username: string, password: string): Promise<LoginResponse> {
+export async function login(username: string, password: string): Promise<LoginResult> {
   try {
-    const response = await api.post<LoginResponse>(
+    const response = await api.post<LoginResult>(
       '/auth/login',
       new URLSearchParams({ username, password }),
       { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
@@ -11,6 +11,50 @@ export async function login(username: string, password: string): Promise<LoginRe
     return response.data;
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Error al iniciar sesión'));
+  }
+}
+
+export function esMfaRequerido(resultado: LoginResult): resultado is MfaRequired {
+  return (resultado as MfaRequired).mfa_required === true;
+}
+
+export async function confirmarMfa(
+  mfaToken: string,
+  code: string
+): Promise<LoginResponse> {
+  try {
+    const response = await api.post<LoginResponse>('/auth/mfa/confirm', {
+      mfa_token: mfaToken,
+      code,
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Código incorrecto'));
+  }
+}
+
+export async function mfaSetup(): Promise<MfaSetupResult> {
+  try {
+    const response = await api.post<MfaSetupResult>('/auth/mfa/setup');
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Error al activar MFA'));
+  }
+}
+
+export async function mfaVerifySetup(code: string): Promise<void> {
+  try {
+    await api.post('/auth/mfa/verify-setup', { code });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Código incorrecto'));
+  }
+}
+
+export async function mfaDisable(code: string): Promise<void> {
+  try {
+    await api.post('/auth/mfa/disable', { code });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Código incorrecto'));
   }
 }
 

@@ -7,6 +7,20 @@ export interface User {
   rol: Rol;
   activo: boolean;
   organizacion?: string | null;
+  mfa_activo?: boolean | null;
+}
+
+export interface MfaRequired {
+  mfa_required: boolean;
+  mfa_token: string;
+  token_type: string;
+}
+
+export type LoginResult = LoginResponse | MfaRequired;
+
+export interface MfaSetupResult {
+  otpauth_url: string;
+  secret: string;
 }
 
 export interface UserUpdatePayload {

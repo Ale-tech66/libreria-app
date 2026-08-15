@@ -18,6 +18,13 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
+def create_mfa_token(data: dict, minutes: int = 5):
+    """Token de un solo propósito (ej. pendiente de verificación MFA), corta duración."""
+    to_encode = data.copy()
+    expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
 def generate_refresh_token() -> str:
     """Genera un token opaco aleatorio (se guarda solo su hash)."""
     return secrets.token_urlsafe(48)

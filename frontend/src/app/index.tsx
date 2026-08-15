@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import HistorialModal from '@/components/HistorialModal';
+import MfaLoginModal from '@/components/MfaLoginModal';
 import ReciboModal from '@/components/ReciboModal';
 import RecuperarModal from '@/components/RecuperarModal';
 import RegistroModal from '@/components/RegistroModal';
@@ -38,6 +39,7 @@ export default function HomeScreen() {
   const [showRegistro, setShowRegistro] = useState(false);
   const [showRecuperar, setShowRecuperar] = useState(false);
   const [reciboId, setReciboId] = useState<number | null>(null);
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [exito, setExito] = useState(false);
   const anteriorUsuario = useRef(user);
 
@@ -60,7 +62,11 @@ export default function HomeScreen() {
     }
     setError(null);
     try {
-      await login(username.trim(), password);
+      const mfaToken = await login(username.trim(), password);
+      if (mfaToken) {
+        setMfaToken(mfaToken);
+        return;
+      }
       setUsername('');
       setPassword('');
     } catch (e) {
@@ -129,6 +135,11 @@ export default function HomeScreen() {
 
           <RegistroModal visible={showRegistro} onClose={() => setShowRegistro(false)} />
           <RecuperarModal visible={showRecuperar} onClose={() => setShowRecuperar(false)} />
+          <MfaLoginModal
+            visible={mfaToken !== null}
+            mfaToken={mfaToken}
+            onClose={() => setMfaToken(null)}
+          />
         </View>
       </ThemedScreen>
     );

@@ -15,5 +15,10 @@ class User(Base):
     hashed_password = Column(String(255), nullable=False)
     rol = Column(String(20), nullable=False, default="ventas")  # admin, inventario, ventas
     activo = Column(Boolean, default=True)
+    mfa_secret = Column(String(32), nullable=True)  # secreto TOTP (null = sin MFA)
 
     organizacion = relationship("Organization", back_populates="usuarios")
+
+    @property
+    def mfa_activo(self) -> bool:
+        return self.mfa_secret is not None

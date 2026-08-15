@@ -2,8 +2,10 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
+import pyotp
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from jose import JWTError, jwt
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar
@@ -12,6 +14,7 @@ from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_user_optional, require_role
 from app.core.security import (
     create_access_token,
+    create_mfa_token,
     generate_refresh_token,
     get_password_hash,
     hash_refresh_token,
@@ -20,7 +23,18 @@ from app.core.security import (
 from app.models.organization import Organization
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.schemas import RefreshRequest, Token, UserCreate, UserOut, UserUpdate
+from app.schemas import (
+    LoginResponse,
+    MfaCodeRequest,
+    MfaConfirmRequest,
+    MfaRequired,
+    MfaSetupOut,
+    RefreshRequest,
+    Token,
+    UserCreate,
+    UserOut,
+    UserUpdate,
+)
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
@@ -114,7 +128,7 @@ def register(
     return new_user
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login", response_model=LoginResponse)
 def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
@@ -135,17 +149,182 @@ def login(
             detail="Usuario desactivado",
         )
 
-    access_token = create_access_token(data={"sub": user.username, "rol": user.rol})
-    refresh_token = _emitir_refresh_token(db, user)
+    # Si el usuario tiene MFA activado, primero hay que validar el código
+    if user.mfa_secret:
+        mfa_token = create_mfa_token({"sub": user.username, "type": "mfa"})
+        return {
+            "mfa_required": True,
+            "mfa_token": mfa_token,
+            "token_type": "bearer",
+        }
+
+    return _emitir_sesion(db, user, registrar_login=True)
+
+
+@router.post("/mfa/confirm", response_model=Token)
+def mfa_confirm(datos: MfaConfirmRequest, db: Session = Depends(get_db)):
+    """Segundo paso del login con MFA: valida el código TOTP y entrega los tokens."""
+    try:
+        payload = jwt.decode(
+            datos.mfa_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+    except JWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión MFA inválida o expirada",
+        )
+    if payload.get("type") != "mfa":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión MFA inválida",
+        )
+
+    user = db.query(User).filter(User.username == payload.get("sub")).first()
+    if not user or not user.activo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario desactivado",
+        )
+    if not user.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA no está configurado para este usuario",
+        )
+
+    _check_mfa_rate_limit(user.id)
+    if not _verificar_totp(user, datos.code):
+        _register_mfa_failure(user.id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Código incorrecto",
+        )
+
+    return _emitir_sesion(db, user, registrar_login=True)
+
+
+@router.post("/mfa/setup", response_model=MfaSetupOut)
+def mfa_setup(
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Genera un secreto TOTP para la app de autenticación (Google Authenticator, etc.)."""
+    secreto = pyotp.random_base32()
+    usuario.mfa_secret = secreto
+    db.commit()
+    totp = pyotp.TOTP(secreto)
+    otpauth_url = totp.provisioning_uri(
+        name=usuario.username, issuer_name="Librería App"
+    )
     registrar(
         db,
-        accion="login",
-        recurso="sesion",
-        detalle=f"Inicio de sesión de '{user.username}'",
-        usuario_id=user.id,
-        username=user.username,
-        organization_id=user.organization_id,
+        accion="editar",
+        recurso="usuario",
+        recurso_id=usuario.id,
+        detalle=f"MFA habilitado para '{usuario.username}'",
+        usuario_id=usuario.id,
+        username=usuario.username,
+        organization_id=usuario.organization_id,
     )
+    return {"otpauth_url": otpauth_url, "secret": secreto}
+
+
+@router.post("/mfa/verify-setup")
+def mfa_verify_setup(
+    datos: MfaCodeRequest,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Confirma que el usuario escaneó el QR probando su código TOTP."""
+    if not usuario.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA no está configurado",
+        )
+    _check_mfa_rate_limit(usuario.id)
+    if not _verificar_totp(usuario, datos.code):
+        _register_mfa_failure(usuario.id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Código incorrecto",
+        )
+    return {"ok": True}
+
+
+@router.post("/mfa/disable")
+def mfa_disable(
+    datos: MfaCodeRequest,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Desactiva el MFA validando primero el código actual."""
+    if not usuario.mfa_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA no está configurado",
+        )
+    _check_mfa_rate_limit(usuario.id)
+    if not _verificar_totp(usuario, datos.code):
+        _register_mfa_failure(usuario.id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Código incorrecto",
+        )
+    usuario.mfa_secret = None
+    db.commit()
+    registrar(
+        db,
+        accion="editar",
+        recurso="usuario",
+        recurso_id=usuario.id,
+        detalle=f"MFA deshabilitado para '{usuario.username}'",
+        usuario_id=usuario.id,
+        username=usuario.username,
+        organization_id=usuario.organization_id,
+    )
+    return {"ok": True}
+
+
+def _verificar_totp(user: User, code: str) -> bool:
+    return pyotp.TOTP(user.mfa_secret).verify(code.strip(), valid_window=1)
+
+
+# Rate limiting específico para códigos MFA
+_MFA_MAX_ATTEMPTS = 5
+_mfa_failed: dict[int, list[datetime]] = defaultdict(list)
+_mfa_lock = Lock()
+
+
+def _check_mfa_rate_limit(user_id: int) -> None:
+    now = datetime.now(timezone.utc)
+    with _mfa_lock:
+        attempts = [t for t in _mfa_failed[user_id] if now - t < _WINDOW]
+        _mfa_failed[user_id] = attempts
+        if len(attempts) >= _MFA_MAX_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiados intentos de código. Intenta de nuevo en unos minutos.",
+            )
+
+
+def _register_mfa_failure(user_id: int) -> None:
+    with _mfa_lock:
+        _mfa_failed[user_id].append(datetime.now(timezone.utc))
+
+
+def _emitir_sesion(db: Session, user: User, registrar_login: bool) -> dict:
+    """Crea el par access/refresh y devuelve la respuesta del login."""
+    access_token = create_access_token(data={"sub": user.username, "rol": user.rol})
+    refresh_token = _emitir_refresh_token(db, user)
+    if registrar_login:
+        registrar(
+            db,
+            accion="login",
+            recurso="sesion",
+            detalle=f"Inicio de sesión de '{user.username}'",
+            usuario_id=user.id,
+            username=user.username,
+            organization_id=user.organization_id,
+        )
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 

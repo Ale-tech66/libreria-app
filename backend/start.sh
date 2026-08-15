@@ -31,7 +31,7 @@ tiene_productos = insp.has_table("productos")
 tiene_foto = tiene_productos and "foto" in [c["name"] for c in insp.get_columns("productos")]
 
 BASE = "0400b0515d57"
-HEAD = "399f6da28835"
+HEAD = "fb73926791f8"
 PREV = "a10499b448a0"
 
 def run(*args):

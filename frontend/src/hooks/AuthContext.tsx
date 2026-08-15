@@ -7,7 +7,7 @@ import React, {
   useState,
 } from 'react';
 
-import { cerrarSesion, getMe, login as apiLogin } from '../api/auth';
+import { cerrarSesion, esMfaRequerido, getMe, login as apiLogin } from '../api/auth';
 import {
   clearSession,
   getRefreshToken,
@@ -15,13 +15,15 @@ import {
   saveSession,
   setUnauthorizedHandler,
 } from '../api/client';
-import { User } from '../types';
+import { LoginResponse, User } from '../types';
 
 interface AuthContextValue {
   user: User | null;
   ready: boolean;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string) => Promise<string | null>;
+  finalizarLogin: (tokens: LoginResponse) => Promise<void>;
+  refrescarUsuario: () => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -41,18 +43,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
   }, []);
 
-  const login = useCallback(async (username: string, password: string) => {
-    setLoading(true);
-    try {
-      const { access_token, refresh_token } = await apiLogin(username, password);
-      await saveSession(access_token, refresh_token, null);
-      const me = await getMe();
-      await saveSession(access_token, refresh_token, me);
-      setUser(me);
-    } finally {
-      setLoading(false);
-    }
+  const finalizarLogin = useCallback(async (tokens: LoginResponse) => {
+    const { access_token, refresh_token } = tokens;
+    await saveSession(access_token, refresh_token, null);
+    const me = await getMe();
+    await saveSession(access_token, refresh_token, me);
+    setUser(me);
   }, []);
+
+  const refrescarUsuario = useCallback(async () => {
+    const me = await getMe();
+    setUser(me);
+  }, []);
+
+  const login = useCallback(
+    async (username: string, password: string) => {
+      setLoading(true);
+      try {
+        const resultado = await apiLogin(username, password);
+        if (esMfaRequerido(resultado)) {
+          return resultado.mfa_token;
+        }
+        await finalizarLogin(resultado);
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [finalizarLogin]
+  );
 
   const restore = useCallback(async () => {
     const stored = await loadStoredUser();
@@ -82,8 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [restore]);
 
   const value = useMemo(
-    () => ({ user, ready, loading, login, logout }),
-    [user, ready, loading, login, logout]
+    () => ({ user, ready, loading, login, finalizarLogin, refrescarUsuario, logout }),
+    [user, ready, loading, login, finalizarLogin, refrescarUsuario, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
