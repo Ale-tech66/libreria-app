@@ -1,0 +1,1 @@
+from . import audit, producto, user, venta  # noqa: F401 (registra los modelos)

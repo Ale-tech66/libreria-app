@@ -111,6 +111,22 @@ class ReporteVentas(BaseModel):
     top_productos: List[ProductoTop]
 
 
+# ─────────────────────────────── Auditoría ───────────────────────────────
+
+
+class AuditLogOut(BaseModel):
+    id: int
+    usuario_id: Optional[int] = None
+    username: Optional[str] = None
+    accion: str
+    recurso: str
+    recurso_id: Optional[int] = None
+    detalle: Optional[str] = None
+    fecha: datetime
+
+    model_config = {"from_attributes": True}
+
+
 # ─────────────────────────────── Paginación ───────────────────────────────
 
 T = TypeVar("T")

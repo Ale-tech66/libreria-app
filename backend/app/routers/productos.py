@@ -3,10 +3,12 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.audit import registrar
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import require_role
+from app.core.deps import get_current_user, require_role
 from app.models.producto import Producto
+from app.models.user import User
 from app.schemas import Paginated, ProductoCreate, ProductoOut
 
 router = APIRouter(
@@ -74,7 +76,7 @@ def listar_productos(
 def crear_producto(
     producto: ProductoCreate,
     db: Session = Depends(get_db),
-    _: None = Depends(require_role("admin", "inventario")),
+    usuario: User = Depends(require_role("admin", "inventario")),
 ):
     db_producto = (
         db.query(Producto)
@@ -88,6 +90,15 @@ def crear_producto(
     db.add(nuevo_producto)
     db.commit()
     db.refresh(nuevo_producto)
+    registrar(
+        db,
+        accion="crear",
+        recurso="producto",
+        recurso_id=nuevo_producto.id,
+        detalle=f"Producto '{nuevo_producto.nombre}' (código {nuevo_producto.codigo_barras})",
+        usuario_id=usuario.id,
+        username=usuario.username,
+    )
     return nuevo_producto
 
 
@@ -108,7 +119,7 @@ def actualizar_producto(
     producto_id: int,
     producto_update: ProductoCreate,
     db: Session = Depends(get_db),
-    _: None = Depends(require_role("admin", "inventario")),
+    usuario: User = Depends(require_role("admin", "inventario")),
 ):
     producto = db.query(Producto).filter(Producto.id == producto_id).first()
     if not producto:
@@ -119,6 +130,15 @@ def actualizar_producto(
 
     db.commit()
     db.refresh(producto)
+    registrar(
+        db,
+        accion="editar",
+        recurso="producto",
+        recurso_id=producto.id,
+        detalle=f"Producto '{producto.nombre}' actualizado",
+        usuario_id=usuario.id,
+        username=usuario.username,
+    )
     return producto
 
 
@@ -126,7 +146,7 @@ def actualizar_producto(
 def desactivar_producto(
     producto_id: int,
     db: Session = Depends(get_db),
-    _: None = Depends(require_role("admin", "inventario")),
+    usuario: User = Depends(require_role("admin", "inventario")),
 ):
     """Eliminación lógica: marca el producto como inactivo."""
     producto = db.query(Producto).filter(Producto.id == producto_id).first()
@@ -136,6 +156,15 @@ def desactivar_producto(
     producto.activo = False
     db.commit()
     db.refresh(producto)
+    registrar(
+        db,
+        accion="desactivar",
+        recurso="producto",
+        recurso_id=producto.id,
+        detalle=f"Producto '{producto.nombre}' desactivado",
+        usuario_id=usuario.id,
+        username=usuario.username,
+    )
     return producto
 
 
@@ -144,7 +173,7 @@ def subir_foto(
     producto_id: int,
     archivo: UploadFile = File(...),
     db: Session = Depends(get_db),
-    _: None = Depends(require_role("admin", "inventario")),
+    usuario: User = Depends(require_role("admin", "inventario")),
 ):
     """Sube o reemplaza la foto de un producto."""
     producto = db.query(Producto).filter(Producto.id == producto_id).first()
@@ -162,4 +191,13 @@ def subir_foto(
     producto.foto = nombre
     db.commit()
     db.refresh(producto)
+    registrar(
+        db,
+        accion="foto",
+        recurso="producto",
+        recurso_id=producto.id,
+        detalle=f"Foto actualizada para '{producto.nombre}'",
+        usuario_id=usuario.id,
+        username=usuario.username,
+    )
     return producto

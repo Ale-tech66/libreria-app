@@ -5,9 +5,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
+from app.core.audit import registrar
 from app.core.database import get_db
-from app.core.deps import require_role
+from app.core.deps import get_current_user, require_role
 from app.models.producto import Producto
+from app.models.user import User
 from app.models.venta import Venta, VentaDetalle
 from app.schemas import (
     Paginated,
@@ -46,7 +48,11 @@ def _venta_out(venta: Venta) -> dict:
 
 
 @router.post("/", response_model=VentaOut)
-def crear_venta(venta: VentaCreate, db: Session = Depends(get_db)):
+def crear_venta(
+    venta: VentaCreate,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
     total_venta = Decimal("0.00")
     detalles_db: list[VentaDetalle] = []
 
@@ -108,6 +114,15 @@ def crear_venta(venta: VentaCreate, db: Session = Depends(get_db)):
         .options(selectinload(Venta.detalles).selectinload(VentaDetalle.producto))
         .filter(Venta.id == nueva_venta.id)
         .first()
+    )
+    registrar(
+        db,
+        accion="vender",
+        recurso="venta",
+        recurso_id=nueva_venta.id,
+        detalle=f"Venta por {total_venta} ({venta.metodo_pago})",
+        usuario_id=usuario.id,
+        username=usuario.username,
     )
     return _venta_out(nueva_venta)
 

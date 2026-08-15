@@ -48,6 +48,9 @@ export default function AppTabs({ rol }: AppTabsProps) {
       {esAdmin && (
         <Tabs.Screen name="usuarios" options={opciones('Usuarios', 'people')} />
       )}
+      {esAdmin && (
+        <Tabs.Screen name="auditoria" options={opciones('Auditoría', 'receipt')} />
+      )}
     </Tabs>
   );
 }

@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
+from app.core.audit import registrar
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_user_optional, require_role
 from app.core.security import create_access_token, get_password_hash, verify_password
@@ -74,6 +75,16 @@ def register(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    registrar(
+        db,
+        accion="registrar",
+        recurso="usuario",
+        recurso_id=new_user.id,
+        detalle=f"Usuario '{new_user.username}' creado con rol {rol}"
+        + ("" if admin else " (primer usuario: admin automático)"),
+        usuario_id=new_user.id,
+        username=new_user.username,
+    )
     return new_user
 
 
@@ -99,6 +110,14 @@ def login(
         )
 
     access_token = create_access_token(data={"sub": user.username, "rol": user.rol})
+    registrar(
+        db,
+        accion="login",
+        recurso="sesion",
+        detalle=f"Inicio de sesión de '{user.username}'",
+        usuario_id=user.id,
+        username=user.username,
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -145,4 +164,20 @@ def actualizar_usuario(
 
     db.commit()
     db.refresh(usuario)
+    cambios = []
+    if update.rol is not None:
+        cambios.append(f"rol={update.rol}")
+    if update.activo is not None:
+        cambios.append(f"activo={update.activo}")
+    if update.password is not None:
+        cambios.append("contraseña cambiada")
+    registrar(
+        db,
+        accion="editar",
+        recurso="usuario",
+        recurso_id=usuario.id,
+        detalle=f"Usuario '{usuario.username}': {', '.join(cambios)}",
+        usuario_id=admin.id,
+        username=admin.username,
+    )
     return usuario

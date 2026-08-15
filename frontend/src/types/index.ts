@@ -94,3 +94,14 @@ export interface ReporteVentas {
   por_dia: VentaPorDia[];
   top_productos: ProductoTop[];
 }
+
+export interface AuditLog {
+  id: number;
+  usuario_id: number | null;
+  username: string | null;
+  accion: string;
+  recurso: string;
+  recurso_id: number | null;
+  detalle: string | null;
+  fecha: string;
+}

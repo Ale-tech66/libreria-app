@@ -10,8 +10,8 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
 from app.core.database import engine
-from app.models import user, producto, venta  # noqa: F401  (registra los modelos)
-from app.routers import auth, productos, ventas
+from app.models import audit, user, producto, venta  # noqa: F401  (registra los modelos)
+from app.routers import auth, auditoria, productos, ventas
 
 logger = logging.getLogger("libreria")
 
@@ -67,6 +67,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 
 app.include_router(auth.router)
+app.include_router(auditoria.router)
 app.include_router(productos.router)
 app.include_router(ventas.router)
 
