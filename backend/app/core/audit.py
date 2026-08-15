@@ -11,9 +11,11 @@ def registrar(
     detalle: str | None = None,
     usuario_id: int | None = None,
     username: str | None = None,
+    organization_id: int | None = None,
 ) -> AuditLog:
     """Registra una acción crítica en el log de auditoría."""
     entrada = AuditLog(
+        organization_id=organization_id,
         usuario_id=usuario_id,
         username=username,
         accion=accion,

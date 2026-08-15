@@ -7,6 +7,9 @@ class Venta(Base):
     __tablename__ = "ventas"
 
     id = Column(Integer, primary_key=True, index=True)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id"), nullable=False, index=True
+    )
     fecha = Column(DateTime, default=datetime.utcnow)
     total = Column(Numeric(10, 2), nullable=False)
     metodo_pago = Column(String(20), default="efectivo")

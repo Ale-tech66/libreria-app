@@ -52,8 +52,11 @@ def listar_productos(
     page_size: int = Query(default=50, ge=1, le=200),
     incluir_inactivos: bool = Query(default=False),
     db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
 ):
-    query = db.query(Producto)
+    query = db.query(Producto).filter(
+        Producto.organization_id == usuario.organization_id
+    )
     if not incluir_inactivos:
         query = query.filter(Producto.activo.is_(True))
     if q:
@@ -80,13 +83,18 @@ def crear_producto(
 ):
     db_producto = (
         db.query(Producto)
-        .filter(Producto.codigo_barras == producto.codigo_barras)
+        .filter(
+            Producto.codigo_barras == producto.codigo_barras,
+            Producto.organization_id == usuario.organization_id,
+        )
         .first()
     )
     if db_producto:
         raise HTTPException(status_code=400, detail="El código de barras ya existe")
 
-    nuevo_producto = Producto(**producto.model_dump())
+    nuevo_producto = Producto(
+        **producto.model_dump(), organization_id=usuario.organization_id
+    )
     db.add(nuevo_producto)
     db.commit()
     db.refresh(nuevo_producto)
@@ -98,15 +106,23 @@ def crear_producto(
         detalle=f"Producto '{nuevo_producto.nombre}' (código {nuevo_producto.codigo_barras})",
         usuario_id=usuario.id,
         username=usuario.username,
+        organization_id=usuario.organization_id,
     )
     return nuevo_producto
 
 
 @router.get("/{codigo_barras}", response_model=ProductoOut)
-def buscar_producto(codigo_barras: str, db: Session = Depends(get_db)):
+def buscar_producto(
+    codigo_barras: str,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
     producto = (
         db.query(Producto)
-        .filter(Producto.codigo_barras == codigo_barras)
+        .filter(
+            Producto.codigo_barras == codigo_barras,
+            Producto.organization_id == usuario.organization_id,
+        )
         .first()
     )
     if not producto:
@@ -121,7 +137,14 @@ def actualizar_producto(
     db: Session = Depends(get_db),
     usuario: User = Depends(require_role("admin", "inventario")),
 ):
-    producto = db.query(Producto).filter(Producto.id == producto_id).first()
+    producto = (
+        db.query(Producto)
+        .filter(
+            Producto.id == producto_id,
+            Producto.organization_id == usuario.organization_id,
+        )
+        .first()
+    )
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
@@ -138,6 +161,7 @@ def actualizar_producto(
         detalle=f"Producto '{producto.nombre}' actualizado",
         usuario_id=usuario.id,
         username=usuario.username,
+        organization_id=usuario.organization_id,
     )
     return producto
 
@@ -149,7 +173,14 @@ def desactivar_producto(
     usuario: User = Depends(require_role("admin", "inventario")),
 ):
     """Eliminación lógica: marca el producto como inactivo."""
-    producto = db.query(Producto).filter(Producto.id == producto_id).first()
+    producto = (
+        db.query(Producto)
+        .filter(
+            Producto.id == producto_id,
+            Producto.organization_id == usuario.organization_id,
+        )
+        .first()
+    )
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
@@ -164,6 +195,7 @@ def desactivar_producto(
         detalle=f"Producto '{producto.nombre}' desactivado",
         usuario_id=usuario.id,
         username=usuario.username,
+        organization_id=usuario.organization_id,
     )
     return producto
 
@@ -176,7 +208,14 @@ def subir_foto(
     usuario: User = Depends(require_role("admin", "inventario")),
 ):
     """Sube o reemplaza la foto de un producto."""
-    producto = db.query(Producto).filter(Producto.id == producto_id).first()
+    producto = (
+        db.query(Producto)
+        .filter(
+            Producto.id == producto_id,
+            Producto.organization_id == usuario.organization_id,
+        )
+        .first()
+    )
     if not producto:
         raise HTTPException(status_code=404, detail="Producto no encontrado")
 
@@ -199,5 +238,6 @@ def subir_foto(
         detalle=f"Foto actualizada para '{producto.nombre}'",
         usuario_id=usuario.id,
         username=usuario.username,
+        organization_id=usuario.organization_id,
     )
     return producto

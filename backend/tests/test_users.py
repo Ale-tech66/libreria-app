@@ -16,8 +16,8 @@ class TestListarUsuarios:
 
 
 class TestActualizarUsuario:
-    def test_cambiar_rol(self, client, admin_token, crear_usuario):
-        usuario = crear_usuario("cambiante", "123456", "ventas")
+    def test_cambiar_rol(self, client, admin_token, crear_usuario, org_principal):
+        usuario = crear_usuario("cambiante", "123456", "ventas", org=org_principal)
         response = client.put(
             f"/auth/users/{usuario.id}",
             headers=auth(admin_token),
@@ -26,8 +26,8 @@ class TestActualizarUsuario:
         assert response.status_code == 200
         assert response.json()["rol"] == "inventario"
 
-    def test_desactivar(self, client, admin_token, crear_usuario):
-        usuario = crear_usuario("apagado", "123456", "ventas")
+    def test_desactivar(self, client, admin_token, crear_usuario, org_principal):
+        usuario = crear_usuario("apagado", "123456", "ventas", org=org_principal)
         response = client.put(
             f"/auth/users/{usuario.id}",
             headers=auth(admin_token),
@@ -42,8 +42,8 @@ class TestActualizarUsuario:
         )
         assert login.status_code == 403
 
-    def test_cambiar_password(self, client, admin_token, crear_usuario):
-        usuario = crear_usuario("cambiapass", "123456", "ventas")
+    def test_cambiar_password(self, client, admin_token, crear_usuario, org_principal):
+        usuario = crear_usuario("cambiapass", "123456", "ventas", org=org_principal)
         client.put(
             f"/auth/users/{usuario.id}",
             headers=auth(admin_token),
@@ -71,8 +71,8 @@ class TestActualizarUsuario:
         )
         assert response.status_code == 400
 
-    def test_no_admin_prohibido(self, client, ventas_token, crear_usuario):
-        usuario = crear_usuario("otro", "123456", "ventas")
+    def test_no_admin_prohibido(self, client, ventas_token, crear_usuario, org_principal):
+        usuario = crear_usuario("otro", "123456", "ventas", org=org_principal)
         response = client.put(
             f"/auth/users/{usuario.id}",
             headers=auth(ventas_token),
@@ -86,8 +86,8 @@ class TestActualizarUsuario:
         )
         assert response.status_code == 404
 
-    def test_password_corta_rechazada(self, client, admin_token, crear_usuario):
-        usuario = crear_usuario("passcorto", "123456", "ventas")
+    def test_password_corta_rechazada(self, client, admin_token, crear_usuario, org_principal):
+        usuario = crear_usuario("passcorto", "123456", "ventas", org=org_principal)
         response = client.put(
             f"/auth/users/{usuario.id}",
             headers=auth(admin_token),

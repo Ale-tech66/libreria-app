@@ -61,7 +61,10 @@ def crear_venta(
         # Bloquea la fila para evitar sobreventa en ventas concurrentes
         producto = (
             db.query(Producto)
-            .filter(Producto.id == detalle.producto_id)
+            .filter(
+                Producto.id == detalle.producto_id,
+                Producto.organization_id == usuario.organization_id,
+            )
             .with_for_update()
             .first()
         )
@@ -95,7 +98,11 @@ def crear_venta(
         )
 
     try:
-        nueva_venta = Venta(total=total_venta, metodo_pago=venta.metodo_pago)
+        nueva_venta = Venta(
+            total=total_venta,
+            metodo_pago=venta.metodo_pago,
+            organization_id=usuario.organization_id,
+        )
         db.add(nueva_venta)
         db.flush()  # Obtiene el ID de la venta
 
@@ -123,6 +130,7 @@ def crear_venta(
         detalle=f"Venta por {total_venta} ({venta.metodo_pago})",
         usuario_id=usuario.id,
         username=usuario.username,
+        organization_id=usuario.organization_id,
     )
     return _venta_out(nueva_venta)
 
@@ -132,12 +140,17 @@ def listar_ventas(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
-    _: None = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ):
-    total = db.query(Venta).count()
+    total = (
+        db.query(Venta)
+        .filter(Venta.organization_id == admin.organization_id)
+        .count()
+    )
     ventas = (
         db.query(Venta)
         .options(selectinload(Venta.detalles).selectinload(VentaDetalle.producto))
+        .filter(Venta.organization_id == admin.organization_id)
         .order_by(Venta.fecha.desc())
         .offset((page - 1) * page_size)
         .limit(page_size)
@@ -155,7 +168,7 @@ def listar_ventas(
 def reporte_ventas(
     dias: int = Query(default=7, ge=1, le=90),
     db: Session = Depends(get_db),
-    _: None = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ):
     """Resumen de ventas de los últimos N días: totales, por día y top productos."""
     desde = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=dias - 1)
@@ -164,7 +177,11 @@ def reporte_ventas(
     ventas = (
         db.query(Venta)
         .options(selectinload(Venta.detalles).selectinload(VentaDetalle.producto))
-        .filter(Venta.fecha >= desde, Venta.fecha <= hasta)
+        .filter(
+            Venta.organization_id == admin.organization_id,
+            Venta.fecha >= desde,
+            Venta.fecha <= hasta,
+        )
         .all()
     )
 

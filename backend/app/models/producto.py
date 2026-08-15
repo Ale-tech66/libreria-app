@@ -1,11 +1,19 @@
-from sqlalchemy import Boolean, Column, Integer, Numeric, String
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, Numeric, String, UniqueConstraint
+
 from app.core.database import Base
+
 
 class Producto(Base):
     __tablename__ = "productos"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "codigo_barras", name="ix_productos_org_codigo"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
-    codigo_barras = Column(String(50), unique=True, index=True, nullable=False)
+    organization_id = Column(
+        Integer, ForeignKey("organizations.id"), nullable=False, index=True
+    )
+    codigo_barras = Column(String(50), index=True, nullable=False)
     nombre = Column(String(200), nullable=False)
     autor = Column(String(150), nullable=True) # Para libros
     editorial = Column(String(100), nullable=True)

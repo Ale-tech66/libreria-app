@@ -6,6 +6,7 @@ export interface User {
   username: string;
   rol: Rol;
   activo: boolean;
+  organizacion?: string | null;
 }
 
 export interface UserUpdatePayload {

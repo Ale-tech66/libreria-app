@@ -1,7 +1,9 @@
 from datetime import date, datetime
 from typing import Generic, List, Literal, Optional, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.models.organization import Organization
 
 # ─────────────────────────────── Usuarios / Auth ───────────────────────────────
 
@@ -14,6 +16,12 @@ class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     password: str = Field(min_length=6, max_length=72)
     rol: ROLES = ROL_VENTAS
+    # Datos de la empresa (solo se usan al registrar la primera cuenta)
+    nombre_negocio: Optional[str] = Field(default=None, max_length=200)
+    tipo_negocio: Optional[str] = Field(default=None, max_length=50)
+    correo: Optional[str] = Field(default=None, max_length=200)
+    telefono: Optional[str] = Field(default=None, max_length=50)
+    pais: Optional[str] = Field(default=None, max_length=100)
 
 
 class UserUpdate(BaseModel):
@@ -27,6 +35,15 @@ class UserOut(BaseModel):
     username: str
     rol: str
     activo: bool
+    organizacion: Optional[str] = None
+
+    @field_validator("organizacion", mode="before")
+    @classmethod
+    def organizacion_nombre(cls, v):
+        """Acepta el objeto Organization y se queda con su nombre."""
+        if isinstance(v, Organization):
+            return v.nombre
+        return v
 
     model_config = {"from_attributes": True}
 

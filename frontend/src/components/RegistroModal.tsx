@@ -17,6 +17,8 @@ export default function RegistroModal({ visible, onClose }: RegistroModalProps) 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirmacion, setConfirmacion] = useState('');
+  const [nombreNegocio, setNombreNegocio] = useState('');
+  const [tipoNegocio, setTipoNegocio] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -26,6 +28,8 @@ export default function RegistroModal({ visible, onClose }: RegistroModalProps) 
     setUsername('');
     setPassword('');
     setConfirmacion('');
+    setNombreNegocio('');
+    setTipoNegocio('');
     onClose();
   };
 
@@ -46,7 +50,11 @@ export default function RegistroModal({ visible, onClose }: RegistroModalProps) 
     }
     setLoading(true);
     try {
-      await apiRegister(usuario, password);
+      await apiRegister(
+        usuario,
+        password,
+        { nombreNegocio: nombreNegocio.trim() || undefined, tipoNegocio: tipoNegocio.trim() || undefined },
+      );
       await login(usuario, password);
       cerrar();
     } catch (e) {
@@ -66,8 +74,8 @@ export default function RegistroModal({ visible, onClose }: RegistroModalProps) 
           <View style={styles.cabecera}>
             <Text style={[styles.titulo, { color: tema.texto }]}>Crear cuenta</Text>
             <Text style={[styles.subtitulo, { color: tema.textoSuave }]}>
-              El primer usuario registrado se convierte en administrador y podrá
-              crear las cuentas de los empleados.
+              El primer usuario registrado crea su empresa y se convierte en
+              administrador. Los empleados se agregan desde la sección Usuarios.
             </Text>
           </View>
 
@@ -96,6 +104,27 @@ export default function RegistroModal({ visible, onClose }: RegistroModalProps) 
               secureTextEntry
               value={confirmacion}
               onChangeText={setConfirmacion}
+            />
+
+            <View style={styles.divisor} />
+            <Text style={[styles.subtitulo, { color: tema.textoSuave }]}>
+              Datos de tu negocio (opcional)
+            </Text>
+            <ThemedInput
+              icono="storefront-outline"
+              label="Nombre del negocio"
+              placeholder="Ej. La Feria del Libro"
+              autoCapitalize="words"
+              value={nombreNegocio}
+              onChangeText={setNombreNegocio}
+            />
+            <ThemedInput
+              icono="pricetag-outline"
+              label="Tipo de negocio"
+              placeholder="Ej. librería, papelería"
+              autoCapitalize="none"
+              value={tipoNegocio}
+              onChangeText={setTipoNegocio}
             />
 
             {error && (
@@ -148,5 +177,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     marginBottom: 10,
     textAlign: 'center',
+  },
+  divisor: {
+    height: 1,
+    backgroundColor: '#444',
+    marginVertical: 16,
   },
 });

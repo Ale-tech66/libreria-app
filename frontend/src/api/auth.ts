@@ -23,9 +23,23 @@ export async function getMe(): Promise<User> {
   }
 }
 
-export async function register(username: string, password: string): Promise<User> {
+export interface RegistroDatos {
+  nombreNegocio?: string;
+  tipoNegocio?: string;
+}
+
+export async function register(
+  username: string,
+  password: string,
+  datos?: RegistroDatos
+): Promise<User> {
   try {
-    const response = await api.post<User>('/auth/register', { username, password });
+    const response = await api.post<User>('/auth/register', {
+      username,
+      password,
+      nombre_negocio: datos?.nombreNegocio,
+      tipo_negocio: datos?.tipoNegocio,
+    });
     return response.data;
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Error al registrarse'));

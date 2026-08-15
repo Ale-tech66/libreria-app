@@ -37,6 +37,11 @@ export default function AjustesScreen() {
           <View style={{ flex: 1 }}>
             <Text style={[styles.usuario, { color: tema.texto }]}>{user?.username}</Text>
             <Text style={[styles.rol, { color: tema.textoSuave }]}>Rol: {user?.rol}</Text>
+            {user?.organizacion ? (
+              <Text style={[styles.rol, { color: tema.textoSuave }]}>
+                Empresa: {user.organizacion}
+              </Text>
+            ) : null}
           </View>
         </ThemedCard>
 

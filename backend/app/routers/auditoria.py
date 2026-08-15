@@ -20,10 +20,12 @@ def listar_auditoria(
     page_size: int = Query(default=50, ge=1, le=200),
     recurso: str | None = Query(default=None, description="Filtra por tipo: usuario, producto, venta, sesion"),
     db: Session = Depends(get_db),
-    _: User = Depends(require_role("admin")),
+    admin: User = Depends(require_role("admin")),
 ):
     """Registro de acciones críticas: quién, cuándo y qué hizo."""
-    query = db.query(AuditLog)
+    query = db.query(AuditLog).filter(
+        AuditLog.organization_id == admin.organization_id
+    )
     if recurso:
         query = query.filter(AuditLog.recurso == recurso)
 
