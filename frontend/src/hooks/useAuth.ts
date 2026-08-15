@@ -18,6 +18,7 @@ export function useAuth() {
     setLoading(true);
     try {
       const { access_token } = await apiLogin(username, password);
+      await saveSession(access_token, null);
       const me = await getMe();
       await saveSession(access_token, me);
       setUser(me);
