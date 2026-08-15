@@ -50,4 +50,15 @@ else:
     run("upgrade", "head")
 EOF
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Admin inicial: si ADMIN_PASSWORD está definida, crea el usuario admin
+# (no hace nada si ya existe). Definir ADMIN_PASSWORD en el dashboard de Render.
+# ─────────────────────────────────────────────────────────────────────────────
+if [ -n "$ADMIN_PASSWORD" ]; then
+    echo "→ Creando admin inicial si no existe..."
+    python create_admin.py
+else
+    echo "→ ADMIN_PASSWORD no definida: no se crea admin inicial."
+fi
+
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}"
