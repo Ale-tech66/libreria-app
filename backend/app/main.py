@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core.config import settings
@@ -78,4 +78,15 @@ app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads"
 
 @app.get("/")
 def read_root():
+    if WEB_DIST.exists():
+        return FileResponse(WEB_DIST / "index.html")
     return {"mensaje": "Bienvenido a la API de la Librería"}
+
+
+# ─────────────────── Panel web (build estático de Expo) ───────────────────
+# Si existe el build web en frontend/dist, se sirve en la raíz para que la
+# app funcione también desde el navegador (misma URL que la API).
+
+WEB_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+if WEB_DIST.exists():
+    app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
