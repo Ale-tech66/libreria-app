@@ -31,7 +31,8 @@ tiene_productos = insp.has_table("productos")
 tiene_foto = tiene_productos and "foto" in [c["name"] for c in insp.get_columns("productos")]
 
 BASE = "0400b0515d57"
-HEAD = "a10499b448a0"
+HEAD = "e34ea81cc575"
+PREV = "a10499b448a0"
 
 def run(*args):
     subprocess.run([sys.executable, "-m", "alembic", *args], check=True)
@@ -39,8 +40,9 @@ def run(*args):
 if tiene_version:
     print("→ BD con control de migraciones; aplicando pendientes.")
 elif tiene_productos and tiene_foto:
-    print("→ BD preexistente ya actualizada (foto/activo presentes); marcando head.")
-    run("stamp", HEAD)
+    print("→ BD preexistente ya actualizada (foto/activo presentes); marcando previa y aplicando pendientes.")
+    run("stamp", PREV)
+    run("upgrade", "head")
 elif tiene_productos:
     print("→ BD preexistente; marcando base y aplicando migraciones nuevas.")
     run("stamp", BASE)
