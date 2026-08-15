@@ -31,7 +31,11 @@ def main():
     try:
         existe = db.query(User).filter(User.username == username).first()
         if existe:
-            print(f"El usuario '{username}' ya existe. Nada que hacer.")
+            existe.hashed_password = get_password_hash(password)
+            existe.rol = "admin"
+            existe.activo = True
+            db.commit()
+            print(f"Usuario admin '{username}' actualizado (contraseña reiniciada).")
             return
         db.add(User(
             username=username,
