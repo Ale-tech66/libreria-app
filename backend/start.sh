@@ -39,6 +39,7 @@ def run(*args):
 
 if tiene_version:
     print("→ BD con control de migraciones; aplicando pendientes.")
+    run("upgrade", "head")
 elif tiene_productos and tiene_foto:
     print("→ BD preexistente ya actualizada (foto/activo presentes); marcando previa y aplicando pendientes.")
     run("stamp", PREV)
