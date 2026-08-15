@@ -7,12 +7,20 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_user_optional, require_role
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.security import (
+    create_access_token,
+    generate_refresh_token,
+    get_password_hash,
+    hash_refresh_token,
+    verify_password,
+)
 from app.models.organization import Organization
+from app.models.refresh_token import RefreshToken
 from app.models.user import User
-from app.schemas import Token, UserCreate, UserOut, UserUpdate
+from app.schemas import RefreshRequest, Token, UserCreate, UserOut, UserUpdate
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
@@ -128,6 +136,7 @@ def login(
         )
 
     access_token = create_access_token(data={"sub": user.username, "rol": user.rol})
+    refresh_token = _emitir_refresh_token(db, user)
     registrar(
         db,
         accion="login",
@@ -137,7 +146,74 @@ def login(
         username=user.username,
         organization_id=user.organization_id,
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+def _emitir_refresh_token(db: Session, user: User) -> str:
+    """Crea un refresh token opaco (30 días) y guarda solo su hash."""
+    token = generate_refresh_token()
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_refresh_token(token),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        )
+    )
+    db.commit()
+    return token
+
+
+@router.post("/refresh", response_model=Token)
+def refresh(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
+    """Renueva el par de tokens con rotación: el token usado queda invalidado."""
+    token_hash = hash_refresh_token(refresh_request.refresh_token)
+    stored = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == token_hash)
+        .first()
+    )
+    if not stored or stored.revoked:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión inválida o ya utilizada",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if stored.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="La sesión expiró, inicia sesión de nuevo",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.query(User).filter(User.id == stored.user_id).first()
+    if not user or not user.activo:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Usuario desactivado",
+        )
+
+    # Rotación: se revoca el token usado y se emite uno nuevo
+    stored.revoked = True
+    db.commit()
+    access_token = create_access_token(data={"sub": user.username, "rol": user.rol})
+    refresh_token = _emitir_refresh_token(db, user)
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+
+
+@router.post("/logout")
+def logout(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
+    """Revoca el refresh token: la sesión queda invalidada."""
+    token_hash = hash_refresh_token(refresh_request.refresh_token)
+    stored = (
+        db.query(RefreshToken)
+        .filter(RefreshToken.token_hash == token_hash)
+        .first()
+    )
+    if stored:
+        stored.revoked = True
+        db.commit()
+    return {"ok": True}
 
 
 @router.get("/me", response_model=UserOut)

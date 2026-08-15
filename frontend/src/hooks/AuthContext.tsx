@@ -7,8 +7,14 @@ import React, {
   useState,
 } from 'react';
 
-import { getMe, login as apiLogin } from '../api/auth';
-import { clearSession, loadStoredUser, saveSession, setUnauthorizedHandler } from '../api/client';
+import { cerrarSesion, getMe, login as apiLogin } from '../api/auth';
+import {
+  clearSession,
+  getRefreshToken,
+  loadStoredUser,
+  saveSession,
+  setUnauthorizedHandler,
+} from '../api/client';
 import { User } from '../types';
 
 interface AuthContextValue {
@@ -27,6 +33,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
 
   const logout = useCallback(async () => {
+    const refreshToken = await getRefreshToken();
+    if (refreshToken) {
+      await cerrarSesion(refreshToken);
+    }
     await clearSession();
     setUser(null);
   }, []);
@@ -34,10 +44,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     setLoading(true);
     try {
-      const { access_token } = await apiLogin(username, password);
-      await saveSession(access_token, null);
+      const { access_token, refresh_token } = await apiLogin(username, password);
+      await saveSession(access_token, refresh_token, null);
       const me = await getMe();
-      await saveSession(access_token, me);
+      await saveSession(access_token, refresh_token, me);
       setUser(me);
     } finally {
       setLoading(false);

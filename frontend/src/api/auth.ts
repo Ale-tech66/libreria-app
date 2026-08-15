@@ -23,6 +23,14 @@ export async function getMe(): Promise<User> {
   }
 }
 
+export async function cerrarSesion(refreshToken: string): Promise<void> {
+  try {
+    await api.post('/auth/logout', { refresh_token: refreshToken });
+  } catch {
+    // El logout local siempre se hace; revocar es lo mejor posible
+  }
+}
+
 export interface RegistroDatos {
   nombreNegocio?: string;
   tipoNegocio?: string;

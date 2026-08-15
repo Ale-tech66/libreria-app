@@ -109,3 +109,62 @@ class TestMe:
         token = create_access_token(data={"sub": "borrado", "rol": "ventas"})
         response = client.get("/auth/me", headers=auth(token))
         assert response.status_code == 403
+
+
+class TestRefreshToken:
+    def _login(self, client, crear_usuario):
+        crear_usuario("sesion", "123456", "ventas")
+        response = client.post(
+            "/auth/login", data={"username": "sesion", "password": "123456"}
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    def test_login_incluye_refresh_token(self, client, crear_usuario):
+        data = self._login(client, crear_usuario)
+        assert "refresh_token" in data
+        assert len(data["refresh_token"]) > 20
+
+    def test_refresh_devuelve_nuevo_par(self, client, crear_usuario):
+        data = self._login(client, crear_usuario)
+        response = client.post("/auth/refresh", json={"refresh_token": data["refresh_token"]})
+        assert response.status_code == 200
+        nuevo = response.json()
+        assert nuevo["refresh_token"] != data["refresh_token"]
+        # El nuevo access token funciona
+        me = client.get("/auth/me", headers=auth(nuevo["access_token"]))
+        assert me.status_code == 200
+
+    def test_refresh_con_rotacion_no_se_puede_reutilizar(self, client, crear_usuario):
+        data = self._login(client, crear_usuario)
+        assert client.post("/auth/refresh", json={"refresh_token": data["refresh_token"]}).status_code == 200
+        # Reutilizar el mismo token ya rotado debe fallar
+        assert client.post("/auth/refresh", json={"refresh_token": data["refresh_token"]}).status_code == 401
+
+    def test_refresh_invalido(self, client):
+        assert client.post("/auth/refresh", json={"refresh_token": "token.que.no.existe.123"}).status_code == 401
+
+    def test_refresh_usuario_desactivado(self, client, crear_usuario, db_session):
+        from datetime import datetime, timedelta, timezone
+
+        from app.core.security import generate_refresh_token, hash_refresh_token
+        from app.models.refresh_token import RefreshToken
+
+        usuario = crear_usuario("desactivado", "123456", "ventas", activo=False)
+        token = generate_refresh_token()
+        db_session.add(
+            RefreshToken(
+                user_id=usuario.id,
+                token_hash=hash_refresh_token(token),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            )
+        )
+        db_session.commit()
+        response = client.post("/auth/refresh", json={"refresh_token": token})
+        assert response.status_code == 403
+
+    def test_logout_revoca_la_sesion(self, client, crear_usuario):
+        data = self._login(client, crear_usuario)
+        assert client.post("/auth/logout", json={"refresh_token": data["refresh_token"]}).status_code == 200
+        # Tras el logout el refresh ya no sirve
+        assert client.post("/auth/refresh", json={"refresh_token": data["refresh_token"]}).status_code == 401

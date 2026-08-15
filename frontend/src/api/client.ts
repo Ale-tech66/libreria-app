@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { AxiosError, create, isAxiosError } from 'axios';
+import axios, { AxiosError, create, isAxiosError } from 'axios';
 import Constants from 'expo-constants';
+
+import { LoginResponse } from '../types';
 
 export const API_URL =
   Constants.expoConfig?.extra?.apiUrl ?? 'https://libreria-api-4lr3.onrender.com';
@@ -11,6 +13,7 @@ export const api = create({
 });
 
 const TOKEN_KEY = 'token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
 const USER_KEY = 'user';
 
 let onUnauthorized: (() => void) | null = null;
@@ -27,12 +30,44 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Renovación silenciosa: ante un 401 se intenta refrescar el token una vez
+// y se reintenta la petición original. Si el refresco falla, se cierra la sesión.
+let refreshPromise: Promise<string> | null = null;
+
+async function renovarToken(): Promise<string> {
+  const refreshToken = await AsyncStorage.getItem(REFRESH_TOKEN_KEY);
+  if (!refreshToken) throw new Error('Sin sesión');
+  const response = await axios.post(`${API_URL}/auth/refresh`, {
+    refresh_token: refreshToken,
+  });
+  const { access_token, refresh_token } = response.data as LoginResponse;
+  await AsyncStorage.multiSet([
+    [TOKEN_KEY, access_token],
+    [REFRESH_TOKEN_KEY, refresh_token],
+  ]);
+  return access_token;
+}
+
 api.interceptors.response.use(
   (response) => response,
   async (error: AxiosError) => {
-    if (error.response?.status === 401) {
-      await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
-      onUnauthorized?.();
+    const ruta = error.config?.url ?? '';
+    const esAuth =
+      ruta.includes('/auth/login') || ruta.includes('/auth/refresh') || ruta.includes('/auth/logout');
+
+    if (error.response?.status === 401 && !esAuth) {
+      try {
+        refreshPromise ??= renovarToken().finally(() => {
+          refreshPromise = null;
+        });
+        const nuevoToken = await refreshPromise;
+        const config = error.config!;
+        config.headers.Authorization = `Bearer ${nuevoToken}`;
+        return api.request(config);
+      } catch {
+        await AsyncStorage.multiRemove([TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY]);
+        onUnauthorized?.();
+      }
     }
     return Promise.reject(error);
   }
@@ -50,9 +85,20 @@ export async function getToken(): Promise<string | null> {
   return AsyncStorage.getItem(TOKEN_KEY);
 }
 
-export async function saveSession(token: string, user: unknown): Promise<void> {
-  await AsyncStorage.setItem(TOKEN_KEY, token);
-  await AsyncStorage.setItem(USER_KEY, JSON.stringify(user));
+export async function getRefreshToken(): Promise<string | null> {
+  return AsyncStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
+export async function saveSession(
+  token: string,
+  refreshToken: string,
+  user: unknown
+): Promise<void> {
+  await AsyncStorage.multiSet([
+    [TOKEN_KEY, token],
+    [REFRESH_TOKEN_KEY, refreshToken],
+    [USER_KEY, JSON.stringify(user)],
+  ]);
 }
 
 export async function loadStoredUser(): Promise<unknown | null> {
@@ -61,5 +107,5 @@ export async function loadStoredUser(): Promise<unknown | null> {
 }
 
 export async function clearSession(): Promise<void> {
-  await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY]);
+  await AsyncStorage.multiRemove([TOKEN_KEY, REFRESH_TOKEN_KEY, USER_KEY]);
 }

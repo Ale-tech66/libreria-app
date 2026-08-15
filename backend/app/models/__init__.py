@@ -1,1 +1,1 @@
-from . import audit, organization, producto, user, venta  # noqa: F401 (registra los modelos)
+from . import audit, organization, producto, refresh_token, user, venta  # noqa: F401 (registra los modelos)
