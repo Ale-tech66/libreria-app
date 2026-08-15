@@ -13,14 +13,16 @@ import Animated, {
 
 import AppTabs from '@/components/app-tabs';
 import { ThemeProvider, useTheme } from '@/design/ThemeContext';
-import { useAuth } from '@/hooks/useAuth';
+import { AuthProvider, useAuth } from '@/hooks/useAuth';
 
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   return (
     <ThemeProvider>
-      <AppRoot />
+      <AuthProvider>
+        <AppRoot />
+      </AuthProvider>
     </ThemeProvider>
   );
 }
