@@ -87,6 +87,59 @@ class TestCrearVenta:
         assert client.post("/ventas/", json={"detalles": []}).status_code == 401
 
 
+class TestRecibo:
+    def test_recibo_con_datos_del_negocio(self, client, admin_token, ventas_token):
+        producto = crear_producto(client, admin_token)
+        venta = client.post(
+            "/ventas/",
+            headers=auth(ventas_token),
+            json={"metodo_pago": "efectivo", "detalles": [{"producto_id": producto["id"], "cantidad": 2}]},
+        ).json()
+        response = client.get(f"/ventas/{venta['id']}/recibo", headers=auth(admin_token))
+        assert response.status_code == 200
+        data = response.json()
+        assert data["negocio"]["nombre"] == "Librería Principal"
+        assert data["vendedor"] == "vendedor"
+        assert data["venta"]["id"] == venta["id"]
+        assert data["venta"]["detalles"][0]["producto_nombre"] == "Don Quijote"
+
+    def test_recibo_con_rol_ventas(self, client, admin_token, ventas_token):
+        producto = crear_producto(client, admin_token)
+        venta = client.post(
+            "/ventas/",
+            headers=auth(ventas_token),
+            json={"detalles": [{"producto_id": producto["id"], "cantidad": 1}]},
+        ).json()
+        response = client.get(f"/ventas/{venta['id']}/recibo", headers=auth(ventas_token))
+        assert response.status_code == 200
+
+    def test_recibo_sin_token(self, client, admin_token):
+        producto = crear_producto(client, admin_token)
+        venta = client.post(
+            "/ventas/", headers=auth(admin_token), json={"detalles": [{"producto_id": producto["id"], "cantidad": 1}]}
+        ).json()
+        assert client.get(f"/ventas/{venta['id']}/recibo").status_code == 401
+
+    def test_recibo_inexistente(self, client, admin_token):
+        assert client.get("/ventas/9999/recibo", headers=auth(admin_token)).status_code == 404
+
+    def test_recibo_de_otra_org_prohibido(self, client, crear_usuario, crear_org, ventas_token):
+        org_ajena = crear_org(nombre="Otra")
+        admin_ajeno = crear_usuario("ajeno", "123456", "admin", org=org_ajena)
+        token_ajeno = client.post(
+            "/auth/login", data={"username": "ajeno", "password": "123456"}
+        ).json()["access_token"]
+        producto = client.post(
+            "/productos/", headers=auth(token_ajeno), json={**PRODUCTO, "codigo_barras": "000999"}
+        ).json()
+        venta = client.post(
+            "/ventas/", headers=auth(token_ajeno), json={"detalles": [{"producto_id": producto["id"], "cantidad": 1}]}
+        ).json()
+        # El vendedor de la empresa principal no puede ver el recibo de otra empresa
+        response = client.get(f"/ventas/{venta['id']}/recibo", headers=auth(ventas_token))
+        assert response.status_code == 404
+
+
 class TestHistorial:
     def test_historial_solo_admin(self, client, admin_token, ventas_token):
         client.get("/ventas/", headers=auth(ventas_token)).status_code == 403

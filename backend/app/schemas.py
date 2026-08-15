@@ -108,6 +108,20 @@ class VentaOut(BaseModel):
     detalles: List[VentaDetalleOut]
 
 
+class NegocioOut(BaseModel):
+    nombre: str
+    tipo_negocio: Optional[str] = None
+    telefono: Optional[str] = None
+    correo: Optional[str] = None
+    pais: Optional[str] = None
+
+
+class ReciboOut(BaseModel):
+    venta: VentaOut
+    vendedor: Optional[str] = None
+    negocio: NegocioOut
+
+
 class VentaPorDia(BaseModel):
     fecha: date
     total: float

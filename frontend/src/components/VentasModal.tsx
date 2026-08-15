@@ -23,9 +23,10 @@ const METODOS: MetodoPago[] = ['efectivo', 'tarjeta', 'transferencia', 'yape'];
 interface VentasModalProps {
   visible: boolean;
   onClose: () => void;
+  onCobrado?: (ventaId: number) => void;
 }
 
-export default function VentasModal({ visible, onClose }: VentasModalProps) {
+export default function VentasModal({ visible, onClose, onCobrado }: VentasModalProps) {
   const { tema } = useTheme();
   const { items, total, cobrando, agregar, cambiarCantidad, eliminar, cobrar } = useCarrito();
   const [scanning, setScanning] = useState(false);
@@ -51,9 +52,9 @@ export default function VentasModal({ visible, onClose }: VentasModalProps) {
 
   const handleCobrar = async () => {
     try {
-      await cobrar(metodo);
-      Alert.alert('Éxito', `Venta registrada correctamente.\nTotal: $${total.toFixed(2)}`);
+      const venta = await cobrar(metodo);
       onClose();
+      onCobrado?.(venta.id);
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Error al registrar la venta');
     }

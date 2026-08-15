@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 
 import { registrarVenta } from '../api/ventas';
-import { CarritoItem, MetodoPago, Producto } from '../types';
+import { CarritoItem, MetodoPago, Producto, Venta } from '../types';
 
 export function useCarrito() {
   const [items, setItems] = useState<CarritoItem[]>([]);
@@ -56,14 +56,15 @@ export function useCarrito() {
   );
 
   const cobrar = useCallback(
-    async (metodoPago: MetodoPago = 'efectivo'): Promise<void> => {
+    async (metodoPago: MetodoPago = 'efectivo'): Promise<Venta> => {
       setCobrando(true);
       try {
-        await registrarVenta({
+        const venta = await registrarVenta({
           metodo_pago: metodoPago,
           detalles: items.map(({ producto_id, cantidad }) => ({ producto_id, cantidad })),
         });
         setItems([]);
+        return venta;
       } finally {
         setCobrando(false);
       }

@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 
 import HistorialModal from '@/components/HistorialModal';
+import ReciboModal from '@/components/ReciboModal';
 import RecuperarModal from '@/components/RecuperarModal';
 import RegistroModal from '@/components/RegistroModal';
 import VentasModal from '@/components/VentasModal';
@@ -36,6 +37,7 @@ export default function HomeScreen() {
   const [showHistorial, setShowHistorial] = useState(false);
   const [showRegistro, setShowRegistro] = useState(false);
   const [showRecuperar, setShowRecuperar] = useState(false);
+  const [reciboId, setReciboId] = useState<number | null>(null);
   const [exito, setExito] = useState(false);
   const anteriorUsuario = useRef(user);
 
@@ -188,8 +190,17 @@ export default function HomeScreen() {
           style={styles.botonAccion}
         />
 
-        <VentasModal visible={showVentas} onClose={() => setShowVentas(false)} />
-        <HistorialModal visible={showHistorial} onClose={() => setShowHistorial(false)} />
+        <VentasModal
+          visible={showVentas}
+          onClose={() => setShowVentas(false)}
+          onCobrado={(ventaId) => setReciboId(ventaId)}
+        />
+        <HistorialModal
+          visible={showHistorial}
+          onClose={() => setShowHistorial(false)}
+          onVerRecibo={(ventaId) => setReciboId(ventaId)}
+        />
+        <ReciboModal ventaId={reciboId} onClose={() => setReciboId(null)} />
       </Animated.View>
 
       {exito && <OverlayExito />}

@@ -1,5 +1,5 @@
 import { api, getErrorMessage } from './client';
-import { Paginated, Venta, VentaPayload } from '../types';
+import { Paginated, ReciboData, Venta, VentaPayload } from '../types';
 
 export async function registrarVenta(venta: VentaPayload): Promise<Venta> {
   try {
@@ -7,6 +7,15 @@ export async function registrarVenta(venta: VentaPayload): Promise<Venta> {
     return response.data;
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Error al registrar la venta'));
+  }
+}
+
+export async function getRecibo(ventaId: number): Promise<ReciboData> {
+  try {
+    const response = await api.get<ReciboData>(`/ventas/${ventaId}/recibo`);
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Error al obtener el recibo'));
   }
 }
 

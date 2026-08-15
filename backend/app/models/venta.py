@@ -10,12 +10,14 @@ class Venta(Base):
     organization_id = Column(
         Integer, ForeignKey("organizations.id"), nullable=False, index=True
     )
+    usuario_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     fecha = Column(DateTime, default=datetime.utcnow)
     total = Column(Numeric(10, 2), nullable=False)
     metodo_pago = Column(String(20), default="efectivo")
-    
+
     # Relación: Una venta tiene muchos detalles
     detalles = relationship("VentaDetalle", back_populates="venta", cascade="all, delete-orphan")
+    vendedor = relationship("User", foreign_keys=[usuario_id])
 
 class VentaDetalle(Base):
     __tablename__ = "venta_detalles"

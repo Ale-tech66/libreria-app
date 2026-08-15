@@ -8,12 +8,14 @@ from sqlalchemy.orm import Session, selectinload
 from app.core.audit import registrar
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_role
+from app.models.organization import Organization
 from app.models.producto import Producto
 from app.models.user import User
 from app.models.venta import Venta, VentaDetalle
 from app.schemas import (
     Paginated,
     ProductoTop,
+    ReciboOut,
     ReporteVentas,
     VentaCreate,
     VentaOut,
@@ -102,6 +104,7 @@ def crear_venta(
             total=total_venta,
             metodo_pago=venta.metodo_pago,
             organization_id=usuario.organization_id,
+            usuario_id=usuario.id,
         )
         db.add(nueva_venta)
         db.flush()  # Obtiene el ID de la venta
@@ -161,6 +164,43 @@ def listar_ventas(
         "page": page,
         "page_size": page_size,
         "items": [_venta_out(v) for v in ventas],
+    }
+
+
+@router.get("/{venta_id}/recibo", response_model=ReciboOut)
+def obtener_recibo(
+    venta_id: int,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Datos completos para imprimir el ticket: venta, vendedor y negocio."""
+    venta = (
+        db.query(Venta)
+        .options(selectinload(Venta.detalles).selectinload(VentaDetalle.producto))
+        .filter(
+            Venta.id == venta_id,
+            Venta.organization_id == usuario.organization_id,
+        )
+        .first()
+    )
+    if not venta:
+        raise HTTPException(status_code=404, detail="Venta no encontrada")
+
+    negocio = (
+        db.query(Organization)
+        .filter(Organization.id == venta.organization_id)
+        .first()
+    )
+    return {
+        "venta": _venta_out(venta),
+        "vendedor": venta.vendedor.username if venta.vendedor else None,
+        "negocio": {
+            "nombre": negocio.nombre if negocio else "Mi Negocio",
+            "tipo_negocio": negocio.tipo_negocio if negocio else None,
+            "telefono": negocio.telefono if negocio else None,
+            "correo": negocio.correo if negocio else None,
+            "pais": negocio.pais if negocio else None,
+        },
     }
 
 

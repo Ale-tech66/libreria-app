@@ -18,6 +18,7 @@ import { MetodoPago, Venta } from '../types';
 interface HistorialModalProps {
   visible: boolean;
   onClose: () => void;
+  onVerRecibo?: (ventaId: number) => void;
 }
 
 const PAGE_SIZE = 50;
@@ -29,7 +30,7 @@ const ICONOS_METODO: Record<MetodoPago, keyof typeof Ionicons.glyphMap> = {
   yape: 'phone-portrait-outline',
 };
 
-export default function HistorialModal({ visible, onClose }: HistorialModalProps) {
+export default function HistorialModal({ visible, onClose, onVerRecibo }: HistorialModalProps) {
   const { tema } = useTheme();
   const [ventas, setVentas] = useState<Venta[]>([]);
   const [total, setTotal] = useState(0);
@@ -148,6 +149,15 @@ export default function HistorialModal({ visible, onClose }: HistorialModalProps
                       </Text>
                     </View>
                   ))}
+                  <TouchableOpacity
+                    style={[styles.botonRecibo, { borderColor: tema.primario }]}
+                    onPress={() => onVerRecibo?.(item.id)}
+                  >
+                    <Ionicons name="print-outline" size={14} color={tema.primario} />
+                    <Text style={[styles.botonReciboTexto, { color: tema.primario }]}>
+                      Imprimir recibo
+                    </Text>
+                  </TouchableOpacity>
                 </ThemedCard>
               )}
               ListEmptyComponent={
@@ -240,6 +250,20 @@ const styles = StyleSheet.create({
   itemTexto: {
     fontSize: 13,
     flex: 1,
+  },
+  botonRecibo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 8,
+    marginTop: 10,
+  },
+  botonReciboTexto: {
+    fontSize: 13,
+    fontWeight: '700',
   },
   vacio: {
     textAlign: 'center',

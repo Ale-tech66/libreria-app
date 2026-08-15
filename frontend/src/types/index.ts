@@ -51,6 +51,20 @@ export interface Venta {
   detalles: VentaDetalle[];
 }
 
+export interface NegocioData {
+  nombre: string;
+  tipo_negocio?: string | null;
+  telefono?: string | null;
+  correo?: string | null;
+  pais?: string | null;
+}
+
+export interface ReciboData {
+  venta: Venta;
+  vendedor?: string | null;
+  negocio: NegocioData;
+}
+
 export interface DetalleVentaPayload {
   producto_id: number;
   cantidad: number;
