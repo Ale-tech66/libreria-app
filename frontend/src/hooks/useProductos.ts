@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { getProductos } from '../api/productos';
+import { getProductos, guardarProductosEnCache } from '../api/productos';
 import { Producto } from '../types';
 
 const PAGE_SIZE = 50;
@@ -37,6 +37,10 @@ export function useProductos(incluirInactivos = false) {
         setProductos((prev) => (reset ? data.items : [...prev, ...data.items]));
         setTotal(data.total);
         hasMoreRef.current = pageRef.current * PAGE_SIZE < data.total;
+        if (!query.trim()) {
+          // Mantiene el catálogo local para poder vender sin conexión
+          guardarProductosEnCache(data.items, !reset).catch(() => {});
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error al cargar productos');
       } finally {

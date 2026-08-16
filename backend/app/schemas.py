@@ -124,6 +124,29 @@ class VentaCreate(BaseModel):
     detalles: List[VentaDetalleCreate] = Field(min_length=1)
 
 
+class VentaPendienteSync(BaseModel):
+    """Venta registrada sin conexión en el dispositivo."""
+    id_local: str = Field(min_length=1, max_length=100)
+    fecha: datetime
+    metodo_pago: METODOS_PAGO = "efectivo"
+    detalles: List[VentaDetalleCreate] = Field(min_length=1)
+
+
+class SyncVentasRequest(BaseModel):
+    ventas: List[VentaPendienteSync] = Field(min_length=1)
+
+
+class ResultadoSyncVenta(BaseModel):
+    id_local: str
+    id_servidor: Optional[int] = None
+    total: Optional[float] = None
+    error: Optional[str] = None
+
+
+class SyncVentasResponse(BaseModel):
+    resultados: List[ResultadoSyncVenta]
+
+
 class VentaDetalleOut(BaseModel):
     id: int
     producto_id: int

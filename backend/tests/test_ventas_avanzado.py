@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from tests.conftest import auth
 
@@ -76,7 +76,7 @@ class TestReporte:
         data = client.get("/ventas/reporte", headers=auth(admin_token)).json()
         assert data["total_ventas"] == 2
         assert data["ingresos_totales"] == 75.0  # 2x25 + 1x25
-        assert data["por_dia"][-1]["fecha"] == date.today().isoformat()
+        assert data["por_dia"][-1]["fecha"] == datetime.utcnow().date().isoformat()
         assert data["por_dia"][-1]["cantidad"] == 2
         assert data["top_productos"][0]["producto_nombre"] == "Don Quijote"
         assert data["top_productos"][0]["cantidad"] == 3

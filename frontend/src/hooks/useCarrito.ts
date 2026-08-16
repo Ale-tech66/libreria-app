@@ -1,11 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 
+import { esErrorDeRed } from '../api/client';
 import { registrarVenta } from '../api/ventas';
-import { CarritoItem, MetodoPago, Producto, Venta } from '../types';
+import { CarritoItem, MetodoPago, Producto, Venta, VentaPayload } from '../types';
+import { useOfflineSync } from './OfflineSyncContext';
 
 export function useCarrito() {
   const [items, setItems] = useState<CarritoItem[]>([]);
   const [cobrando, setCobrando] = useState(false);
+  const { agregarPendiente } = useOfflineSync();
 
   const agregar = useCallback((producto: Producto) => {
     setItems((prev) => {
@@ -56,20 +59,28 @@ export function useCarrito() {
   );
 
   const cobrar = useCallback(
-    async (metodoPago: MetodoPago = 'efectivo'): Promise<Venta> => {
+    async (metodoPago: MetodoPago = 'efectivo'): Promise<Venta | null> => {
       setCobrando(true);
+      const payload: VentaPayload = {
+        metodo_pago: metodoPago,
+        detalles: items.map(({ producto_id, cantidad }) => ({ producto_id, cantidad })),
+      };
       try {
-        const venta = await registrarVenta({
-          metodo_pago: metodoPago,
-          detalles: items.map(({ producto_id, cantidad }) => ({ producto_id, cantidad })),
-        });
+        const venta = await registrarVenta(payload);
         setItems([]);
         return venta;
+      } catch (error) {
+        if (esErrorDeRed(error)) {
+          await agregarPendiente(payload);
+          setItems([]);
+          return null;
+        }
+        throw error;
       } finally {
         setCobrando(false);
       }
     },
-    [items]
+    [items, agregarPendiente]
   );
 
   return { items, total, cobrando, agregar, cambiarCantidad, eliminar, limpiar, cobrar };

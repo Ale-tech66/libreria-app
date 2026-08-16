@@ -73,6 +73,10 @@ api.interceptors.response.use(
   }
 );
 
+export function esErrorDeRed(error: unknown): boolean {
+  return isAxiosError(error) && !error.response;
+}
+
 export function getErrorMessage(error: unknown, fallback: string): string {
   if (isAxiosError(error)) {
     const detail = (error.response?.data as { detail?: string } | undefined)?.detail;

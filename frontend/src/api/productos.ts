@@ -1,6 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { isAxiosError } from 'axios';
 import { api, getErrorMessage } from './client';
 import { Paginated, Producto, ProductoPayload } from '../types';
+
+const CLAVE_CACHE = 'productos_cache';
 
 export interface ProductoParams {
   q?: string;
@@ -28,6 +31,45 @@ export async function buscarProductoPorCodigo(codigo: string): Promise<Producto 
     }
     throw new Error(getErrorMessage(error, 'Error al buscar producto'));
   }
+}
+
+async function leerCache(): Promise<Producto[]> {
+  try {
+    const raw = await AsyncStorage.getItem(CLAVE_CACHE);
+    return raw ? (JSON.parse(raw) as Producto[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function guardarProductosEnCache(items: Producto[], append = false): Promise<void> {
+  try {
+    const previos = append ? await leerCache() : [];
+    const mapa = new Map(previos.map((p) => [p.id, p]));
+    items.forEach((p) => mapa.set(p.id, p));
+    await AsyncStorage.setItem(CLAVE_CACHE, JSON.stringify([...mapa.values()]));
+  } catch {
+    // El caché es best-effort: nunca debe romper el flujo normal
+  }
+}
+
+export async function buscarProductoEnCache(codigo: string): Promise<Producto | null> {
+  const lista = await leerCache();
+  return lista.find((p) => p.codigo_barras === codigo) ?? null;
+}
+
+export async function refrescarCacheProductos(): Promise<void> {
+  let items: Producto[] = [];
+  let pagina = 1;
+  const pageSize = 100;
+  let total = Infinity;
+  while (items.length < total && pagina <= 6) {
+    const data = await getProductos({ page: pagina, page_size: pageSize });
+    total = data.total;
+    items = [...items, ...data.items];
+    pagina += 1;
+  }
+  await guardarProductosEnCache(items, false);
 }
 
 export async function crearProducto(producto: ProductoPayload): Promise<Producto> {

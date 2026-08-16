@@ -14,6 +14,7 @@ import Animated, {
 import AppTabs from '@/components/app-tabs';
 import { ThemeProvider, useTheme } from '@/design/ThemeContext';
 import { AuthProvider, useAuth } from '@/hooks/useAuth';
+import { OfflineSyncProvider } from '@/hooks/OfflineSyncContext';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -21,7 +22,9 @@ export default function RootLayout() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <AppRoot />
+        <OfflineSyncProvider>
+          <AppRoot />
+        </OfflineSyncProvider>
       </AuthProvider>
     </ThemeProvider>
   );

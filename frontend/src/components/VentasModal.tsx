@@ -11,12 +11,13 @@ import {
   View,
 } from 'react-native';
 
-import { buscarProductoPorCodigo } from '@/api/productos';
+import { buscarProductoEnCache, buscarProductoPorCodigo } from '@/api/productos';
 import ScannerModal from '@/components/ScannerModal';
 import { ThemedButton, ThemedCard, ThemedChip, ThemedHeader, ThemedScreen } from '@/design/components';
 import { useTheme } from '@/design/ThemeContext';
 import { useCarrito } from '@/hooks/useCarrito';
-import { MetodoPago } from '@/types';
+import { useOfflineSync } from '@/hooks/OfflineSyncContext';
+import { MetodoPago, Producto } from '@/types';
 
 const METODOS: MetodoPago[] = ['efectivo', 'tarjeta', 'transferencia', 'yape'];
 
@@ -29,32 +30,41 @@ interface VentasModalProps {
 export default function VentasModal({ visible, onClose, onCobrado }: VentasModalProps) {
   const { tema } = useTheme();
   const { items, total, cobrando, agregar, cambiarCantidad, eliminar, cobrar } = useCarrito();
+  const { pendientes, sincronizando, sincronizarAhora } = useOfflineSync();
   const [scanning, setScanning] = useState(false);
   const [metodo, setMetodo] = useState<MetodoPago>('efectivo');
 
   const handleScan = async (data: string) => {
     setScanning(false);
+    let producto: Producto | null = null;
     try {
-      const producto = await buscarProductoPorCodigo(data);
-      if (!producto) {
-        Alert.alert('Error', 'Producto no registrado. Ve a Inventario para agregarlo.');
-        return;
-      }
-      if (!producto.activo) {
-        Alert.alert('Error', 'Este producto está desactivado y no puede venderse.');
-        return;
-      }
-      agregar(producto);
-    } catch (e) {
-      Alert.alert('Error', e instanceof Error ? e.message : 'Error al escanear');
+      producto = await buscarProductoPorCodigo(data);
+    } catch {
+      producto = await buscarProductoEnCache(data);
     }
+    if (!producto) {
+      Alert.alert('Error', 'Producto no registrado. Ve a Inventario para agregarlo.');
+      return;
+    }
+    if (!producto.activo) {
+      Alert.alert('Error', 'Este producto está desactivado y no puede venderse.');
+      return;
+    }
+    agregar(producto);
   };
 
   const handleCobrar = async () => {
     try {
       const venta = await cobrar(metodo);
       onClose();
-      onCobrado?.(venta.id);
+      if (venta) {
+        onCobrado?.(venta.id);
+      } else {
+        Alert.alert(
+          'Sin conexión',
+          'La venta se guardó en el dispositivo y se sincronizará automáticamente cuando haya conexión.'
+        );
+      }
     } catch (e) {
       Alert.alert('Error', e instanceof Error ? e.message : 'Error al registrar la venta');
     }
@@ -83,6 +93,27 @@ export default function VentasModal({ visible, onClose, onCobrado }: VentasModal
             onPress={() => setScanning(true)}
             style={{ marginBottom: 12 }}
           />
+
+          {pendientes.length > 0 && (
+            <View
+              style={[
+                styles.bannerOffline,
+                { backgroundColor: `${tema.advertencia}22`, borderColor: tema.advertencia },
+              ]}
+            >
+              <Ionicons name="cloud-offline-outline" size={18} color={tema.advertencia} />
+              <Text style={[styles.bannerTexto, { color: tema.texto }]}>
+                {pendientes.length} venta(s) pendientes de sincronizar
+              </Text>
+              {sincronizando ? (
+                <ActivityIndicator size="small" color={tema.advertencia} />
+              ) : (
+                <TouchableOpacity onPress={sincronizarAhora}>
+                  <Text style={[styles.bannerAccion, { color: tema.primario }]}>Sincronizar</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
 
           <Text style={[styles.etiquetaMetodo, { color: tema.textoSuave }]}>
             MÉTODO DE PAGO
@@ -209,6 +240,25 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     marginBottom: 8,
+  },
+  bannerOffline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 12,
+  },
+  bannerTexto: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  bannerAccion: {
+    fontSize: 13,
+    fontWeight: '800',
   },
   filaMetodos: {
     flexDirection: 'row',

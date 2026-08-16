@@ -17,8 +17,11 @@ from app.schemas import (
     ProductoTop,
     ReciboOut,
     ReporteVentas,
+    SyncVentasRequest,
+    SyncVentasResponse,
     VentaCreate,
     VentaOut,
+    VentaPendienteSync,
     VentaPorDia,
 )
 
@@ -49,17 +52,18 @@ def _venta_out(venta: Venta) -> dict:
     }
 
 
-@router.post("/", response_model=VentaOut)
-def crear_venta(
-    venta: VentaCreate,
-    db: Session = Depends(get_db),
-    usuario: User = Depends(get_current_user),
-):
+def _crear_venta_db(
+    db: Session,
+    usuario: User,
+    detalles,
+    metodo_pago: str,
+    fecha=None,
+) -> Venta:
+    """Valida productos, descuenta stock y crea la venta (precio del servidor)."""
     total_venta = Decimal("0.00")
     detalles_db: list[VentaDetalle] = []
 
-    # 1. Procesar cada producto del carrito
-    for detalle in venta.detalles:
+    for detalle in detalles:
         # Bloquea la fila para evitar sobreventa en ventas concurrentes
         producto = (
             db.query(Producto)
@@ -102,9 +106,10 @@ def crear_venta(
     try:
         nueva_venta = Venta(
             total=total_venta,
-            metodo_pago=venta.metodo_pago,
+            metodo_pago=metodo_pago,
             organization_id=usuario.organization_id,
             usuario_id=usuario.id,
+            fecha=fecha,
         )
         db.add(nueva_venta)
         db.flush()  # Obtiene el ID de la venta
@@ -130,12 +135,65 @@ def crear_venta(
         accion="vender",
         recurso="venta",
         recurso_id=nueva_venta.id,
-        detalle=f"Venta por {total_venta} ({venta.metodo_pago})",
+        detalle=f"Venta por {total_venta} ({metodo_pago})"
+        + (" [sincronizada offline]" if fecha else ""),
         usuario_id=usuario.id,
         username=usuario.username,
         organization_id=usuario.organization_id,
     )
+    return nueva_venta
+
+
+@router.post("/", response_model=VentaOut)
+def crear_venta(
+    venta: VentaCreate,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    nueva_venta = _crear_venta_db(db, usuario, venta.detalles, venta.metodo_pago)
     return _venta_out(nueva_venta)
+
+
+@router.post("/offline-sync", response_model=SyncVentasResponse)
+def sincronizar_ventas_offline(
+    datos: SyncVentasRequest,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Recibe las ventas guardadas sin conexión y las registra una a una.
+
+    Cada venta se valida por separado: si una falla (producto inexistente,
+    stock insuficiente...), el resto igual se procesa y el dispositivo
+    recibe el motivo por venta.
+    """
+    resultados = []
+    for pendiente in datos.ventas:
+        try:
+            venta = _crear_venta_db(
+                db,
+                usuario,
+                pendiente.detalles,
+                pendiente.metodo_pago,
+                fecha=pendiente.fecha,
+            )
+            resultados.append(
+                {
+                    "id_local": pendiente.id_local,
+                    "id_servidor": venta.id,
+                    "total": float(venta.total),
+                    "error": None,
+                }
+            )
+        except HTTPException as e:
+            resultados.append(
+                {
+                    "id_local": pendiente.id_local,
+                    "id_servidor": None,
+                    "total": None,
+                    "error": e.detail,
+                }
+            )
+    return {"resultados": resultados}
 
 
 @router.get("/", response_model=Paginated[VentaOut])
@@ -211,8 +269,9 @@ def reporte_ventas(
     admin: User = Depends(require_role("admin")),
 ):
     """Resumen de ventas de los últimos N días: totales, por día y top productos."""
-    desde = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=dias - 1)
-    hasta = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
+    ahora = datetime.utcnow()  # las fechas se guardan en UTC
+    desde = ahora.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=dias - 1)
+    hasta = ahora.replace(hour=23, minute=59, second=59, microsecond=999999)
 
     ventas = (
         db.query(Venta)

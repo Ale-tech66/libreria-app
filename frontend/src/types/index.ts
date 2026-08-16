@@ -90,6 +90,22 @@ export interface VentaPayload {
   detalles: DetalleVentaPayload[];
 }
 
+export interface VentaPendiente extends VentaPayload {
+  id_local: string;
+  fecha: string;
+}
+
+export interface ResultadoSyncVenta {
+  id_local: string;
+  id_servidor: number | null;
+  total: number | null;
+  error: string | null;
+}
+
+export interface SyncVentasResponse {
+  resultados: ResultadoSyncVenta[];
+}
+
 export interface Paginated<T> {
   total: number;
   page: number;

@@ -1,12 +1,39 @@
+import { isAxiosError } from 'axios';
 import { api, getErrorMessage } from './client';
-import { Paginated, ReciboData, Venta, VentaPayload } from '../types';
+import {
+  Paginated,
+  ReciboData,
+  SyncVentasResponse,
+  Venta,
+  VentaPayload,
+  VentaPendiente,
+} from '../types';
 
 export async function registrarVenta(venta: VentaPayload): Promise<Venta> {
   try {
     const response = await api.post<Venta>('/ventas/', venta);
     return response.data;
   } catch (error) {
+    if (isAxiosError(error) && !error.response) throw error;
     throw new Error(getErrorMessage(error, 'Error al registrar la venta'));
+  }
+}
+
+export async function sincronizarVentas(
+  pendientes: VentaPendiente[]
+): Promise<SyncVentasResponse> {
+  try {
+    const response = await api.post<SyncVentasResponse>('/ventas/offline-sync', {
+      ventas: pendientes.map(({ id_local, fecha, metodo_pago, detalles }) => ({
+        id_local,
+        fecha,
+        metodo_pago,
+        detalles,
+      })),
+    });
+    return response.data;
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Error al sincronizar ventas'));
   }
 }
 
