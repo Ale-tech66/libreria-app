@@ -80,6 +80,12 @@ class MfaCodeRequest(BaseModel):
     code: str = Field(min_length=6, max_length=6)
 
 
+class MfaVerifyRequest(BaseModel):
+    """Verificación del QR: el secreto se confirma y recién ahí se guarda."""
+    secret: str = Field(min_length=16, max_length=64)
+    code: str = Field(min_length=6, max_length=6)
+
+
 class MfaSetupOut(BaseModel):
     otpauth_url: str
     secret: str

@@ -113,7 +113,7 @@ class TestMe:
 
 class TestMfa:
     def _setup_mfa(self, client, admin_token):
-        """Activa MFA para el admin y devuelve el TOTP."""
+        """Activa MFA para el admin (setup + verify) y devuelve el TOTP."""
         import pyotp
 
         response = client.post("/auth/mfa/setup", headers=auth(admin_token))
@@ -121,7 +121,14 @@ class TestMfa:
         data = response.json()
         assert "otpauth_url" in data
         assert "secret" in data
-        return pyotp.TOTP(data["secret"])
+        totp = pyotp.TOTP(data["secret"])
+        verify = client.post(
+            "/auth/mfa/verify-setup",
+            headers=auth(admin_token),
+            json={"secret": data["secret"], "code": totp.now()},
+        )
+        assert verify.status_code == 200
+        return totp
 
     def test_login_sin_mfa_normal(self, client, crear_usuario):
         crear_usuario("sinmfa", "123456", "ventas")
@@ -204,22 +211,62 @@ class TestMfa:
         assert login["mfa_required"] is True
 
     def test_verify_setup_valida_codigo(self, client, admin_token):
-        totp = self._setup_mfa(client, admin_token)
+        response = client.post("/auth/mfa/setup", headers=auth(admin_token))
+        data = response.json()
+        import pyotp
+
+        totp = pyotp.TOTP(data["secret"])
         response = client.post(
             "/auth/mfa/verify-setup",
             headers=auth(admin_token),
-            json={"code": totp.now()},
+            json={"secret": data["secret"], "code": totp.now()},
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
 
-    def test_verify_setup_sin_mfa(self, client, admin_token):
-        response = client.post(
+    def test_verify_setup_codigo_incorrecto_no_activa(self, client, admin_token):
+        """El bug: setup NO debe dejar al usuario bloqueado sin verificar."""
+        import pyotp
+
+        response = client.post("/auth/mfa/setup", headers=auth(admin_token))
+        data = response.json()
+        totp = pyotp.TOTP(data["secret"])
+        codigo_mal = "000000" if totp.now() != "000000" else "111111"
+
+        verify = client.post(
             "/auth/mfa/verify-setup",
             headers=auth(admin_token),
-            json={"code": "123456"},
+            json={"secret": data["secret"], "code": codigo_mal},
         )
-        assert response.status_code == 400
+        assert verify.status_code == 401
+
+        # Tras setup sin verificar (o verificación fallida) el login sigue normal
+        login = client.post(
+            "/auth/login", data={"username": "admin", "password": "admin123"}
+        ).json()
+        assert "access_token" in login
+        assert login.get("mfa_required") is not True
+
+    def test_setup_no_guarda_hasta_verificar(self, client, admin_token):
+        """Solo tras verify-setup con código válido el login pide el código."""
+        import pyotp
+
+        setup = client.post("/auth/mfa/setup", headers=auth(admin_token)).json()
+        login_antes = client.post(
+            "/auth/login", data={"username": "admin", "password": "admin123"}
+        ).json()
+        assert login_antes.get("mfa_required") is not True
+
+        totp = pyotp.TOTP(setup["secret"])
+        client.post(
+            "/auth/mfa/verify-setup",
+            headers=auth(admin_token),
+            json={"secret": setup["secret"], "code": totp.now()},
+        )
+        login_despues = client.post(
+            "/auth/login", data={"username": "admin", "password": "admin123"}
+        ).json()
+        assert login_despues["mfa_required"] is True
 
 
 class TestRefreshToken:

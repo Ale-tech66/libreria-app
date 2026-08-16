@@ -29,6 +29,7 @@ from app.schemas import (
     MfaConfirmRequest,
     MfaRequired,
     MfaSetupOut,
+    MfaVerifyRequest,
     RefreshRequest,
     Token,
     UserCreate,
@@ -207,14 +208,40 @@ def mfa_setup(
     db: Session = Depends(get_db),
     usuario: User = Depends(get_current_user),
 ):
-    """Genera un secreto TOTP para la app de autenticación (Google Authenticator, etc.)."""
+    """Genera un secreto TOTP para la app de autenticación.
+
+    IMPORTANTE: NO se guarda todavía. El secreto solo se persiste cuando
+    /mfa/verify-setup confirma que el usuario lo escaneó (código válido),
+    así nunca se queda bloqueado por activar sin completar.
+    """
     secreto = pyotp.random_base32()
-    usuario.mfa_secret = secreto
-    db.commit()
     totp = pyotp.TOTP(secreto)
     otpauth_url = totp.provisioning_uri(
         name=usuario.username, issuer_name="Librería App"
     )
+    return {"otpauth_url": otpauth_url, "secret": secreto}
+
+
+@router.post("/mfa/verify-setup")
+def mfa_verify_setup(
+    datos: MfaVerifyRequest,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Confirma que el usuario escaneó el QR probando su código TOTP.
+
+    El secreto viaja desde el dispositivo (lo generó /mfa/setup) y recién
+    aquí, con un código válido, se guarda en la BD.
+    """
+    _check_mfa_rate_limit(usuario.id)
+    if not pyotp.TOTP(datos.secret).verify(datos.code, valid_window=1):
+        _register_mfa_failure(usuario.id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Código incorrecto",
+        )
+    usuario.mfa_secret = datos.secret
+    db.commit()
     registrar(
         db,
         accion="editar",
@@ -225,28 +252,6 @@ def mfa_setup(
         username=usuario.username,
         organization_id=usuario.organization_id,
     )
-    return {"otpauth_url": otpauth_url, "secret": secreto}
-
-
-@router.post("/mfa/verify-setup")
-def mfa_verify_setup(
-    datos: MfaCodeRequest,
-    db: Session = Depends(get_db),
-    usuario: User = Depends(get_current_user),
-):
-    """Confirma que el usuario escaneó el QR probando su código TOTP."""
-    if not usuario.mfa_secret:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="MFA no está configurado",
-        )
-    _check_mfa_rate_limit(usuario.id)
-    if not _verificar_totp(usuario, datos.code):
-        _register_mfa_failure(usuario.id)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Código incorrecto",
-        )
     return {"ok": True}
 
 

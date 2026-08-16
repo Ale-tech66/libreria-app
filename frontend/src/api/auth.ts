@@ -42,9 +42,9 @@ export async function mfaSetup(): Promise<MfaSetupResult> {
   }
 }
 
-export async function mfaVerifySetup(code: string): Promise<void> {
+export async function mfaVerifySetup(secret: string, code: string): Promise<void> {
   try {
-    await api.post('/auth/mfa/verify-setup', { code });
+    await api.post('/auth/mfa/verify-setup', { secret, code });
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Código incorrecto'));
   }

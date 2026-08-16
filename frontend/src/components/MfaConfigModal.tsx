@@ -55,7 +55,7 @@ export default function MfaConfigModal({ visible, onClose }: MfaConfigModalProps
     }
     setLoading(true);
     try {
-      await mfaVerifySetup(code);
+      await mfaVerifySetup(secreto, code);
       await refrescarUsuario();
       Alert.alert('MFA activado', 'Tu cuenta ahora requiere el código de 6 dígitos al iniciar sesión.');
       setPaso('menu');

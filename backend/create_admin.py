@@ -34,8 +34,11 @@ def main():
             existe.hashed_password = get_password_hash(password)
             existe.rol = "admin"
             existe.activo = True
+            # Reseteo completo: también limpia el MFA, para recuperar la
+            # cuenta si el admin perdió el acceso a su app de autenticación.
+            existe.mfa_secret = None
             db.commit()
-            print(f"Usuario admin '{username}' actualizado (contraseña reiniciada).")
+            print(f"Usuario admin '{username}' actualizado (contraseña y MFA reiniciados).")
             return
         db.add(User(
             username=username,
