@@ -1,4 +1,6 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String
+from datetime import datetime
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -16,6 +18,9 @@ class User(Base):
     rol = Column(String(20), nullable=False, default="ventas")  # admin, inventario, ventas
     activo = Column(Boolean, default=True)
     mfa_secret = Column(String(32), nullable=True)  # secreto TOTP (null = sin MFA)
+    correo = Column(String(200), nullable=True)  # para verificación y recuperación
+    codigo_verificacion = Column(String(64), nullable=True)  # hash SHA-256 del código
+    codigo_expira = Column(DateTime, nullable=True)
 
     organizacion = relationship("Organization", back_populates="usuarios")
 

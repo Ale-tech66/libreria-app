@@ -91,6 +91,31 @@ class MfaSetupOut(BaseModel):
     secret: str
 
 
+class CodigoVerificacionRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    code: str = Field(min_length=6, max_length=6)
+
+
+class ReenviarCodigoRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+
+
+class RecuperarRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+
+
+class RecuperarConfirmarRequest(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    code: str = Field(min_length=6, max_length=6)
+    nueva_password: str = Field(min_length=6, max_length=72)
+
+
+class RegistroOut(UserOut):
+    """Respuesta del registro: indica si hay que verificar el correo."""
+    requiere_verificacion: bool = False
+    mensaje: str | None = None
+
+
 # ─────────────────────────────── Productos ───────────────────────────────
 
 

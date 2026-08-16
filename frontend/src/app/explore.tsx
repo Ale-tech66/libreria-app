@@ -229,7 +229,11 @@ function TarjetaProducto({
 }) {
   const { tema } = useTheme();
   const stockBajo = producto.activo && producto.stock <= STOCK_BAJO;
-  const uri = producto.foto ? `${API_URL}/uploads/${producto.foto}` : null;
+  const uri = producto.foto
+      ? producto.foto.startsWith('http')
+        ? producto.foto
+        : `${API_URL}/uploads/${producto.foto}`
+      : null;
 
   return (
     <ThemedCard

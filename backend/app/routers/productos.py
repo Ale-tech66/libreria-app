@@ -21,6 +21,27 @@ TIPOS_PERMITIDOS = {"image/jpeg", "image/png", "image/webp"}
 MAX_FOTO_BYTES = 5 * 1024 * 1024  # 5 MB
 
 
+def _r2_cliente():
+    import boto3
+
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{settings.R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+        aws_access_key_id=settings.R2_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.R2_SECRET_ACCESS_KEY,
+        region_name="auto",
+    )
+
+
+def _r2_activo() -> bool:
+    return bool(
+        settings.R2_ACCOUNT_ID
+        and settings.R2_ACCESS_KEY_ID
+        and settings.R2_SECRET_ACCESS_KEY
+        and settings.R2_BUCKET
+    )
+
+
 def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
     if archivo.content_type not in TIPOS_PERMITIDOS:
         raise HTTPException(
@@ -38,11 +59,39 @@ def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
         "image/webp": ".webp",
     }[archivo.content_type]
 
+    if _r2_activo():
+        # Object storage: la foto vive en R2 y devolvemos su URL pública
+        clave = f"productos/producto_{producto_id}{extension}"
+        _r2_cliente().put_object(
+            Bucket=settings.R2_BUCKET,
+            Key=clave,
+            Body=contenido,
+            ContentType=archivo.content_type,
+        )
+        base = settings.R2_PUBLIC_URL.rstrip("/") if settings.R2_PUBLIC_URL else ""
+        return f"{base}/{clave}" if base else clave
+
     directorio = Path(settings.UPLOAD_DIR)
     directorio.mkdir(parents=True, exist_ok=True)
     nombre = f"producto_{producto_id}{extension}"
     (directorio / nombre).write_bytes(contenido)
     return nombre
+
+
+def _borrar_foto(foto: str | None) -> None:
+    if not foto:
+        return
+    if foto.startswith("http") and _r2_activo():
+        # URL pública de R2: borra el objeto
+        clave = foto.rsplit("/", 1)[-1]
+        try:
+            _r2_cliente().delete_object(Bucket=settings.R2_BUCKET, Key=clave)
+        except Exception:  # noqa: BLE001
+            pass
+        return
+    anterior = Path(settings.UPLOAD_DIR) / foto
+    if anterior.exists():
+        anterior.unlink()
 
 
 @router.get("/", response_model=Paginated[ProductoOut])
@@ -221,11 +270,9 @@ def subir_foto(
 
     nombre = _guardar_foto(producto_id, archivo)
 
-    # Elimina la foto anterior si cambió de extensión
+    # Elimina la foto anterior (local o en R2)
     if producto.foto and producto.foto != nombre:
-        anterior = Path(settings.UPLOAD_DIR) / producto.foto
-        if anterior.exists():
-            anterior.unlink()
+        _borrar_foto(producto.foto)
 
     producto.foto = nombre
     db.commit()

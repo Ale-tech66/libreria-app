@@ -78,22 +78,69 @@ export async function cerrarSesion(refreshToken: string): Promise<void> {
 export interface RegistroDatos {
   nombreNegocio?: string;
   tipoNegocio?: string;
+  correo?: string;
+}
+
+export interface RegistroResult extends User {
+  requiere_verificacion?: boolean;
+  mensaje?: string | null;
 }
 
 export async function register(
   username: string,
   password: string,
   datos?: RegistroDatos
-): Promise<User> {
+): Promise<RegistroResult> {
   try {
-    const response = await api.post<User>('/auth/register', {
+    const response = await api.post<RegistroResult>('/auth/register', {
       username,
       password,
       nombre_negocio: datos?.nombreNegocio,
       tipo_negocio: datos?.tipoNegocio,
+      correo: datos?.correo,
     });
     return response.data;
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Error al registrarse'));
+  }
+}
+
+export async function verificarCodigo(username: string, code: string): Promise<void> {
+  try {
+    await api.post('/auth/verificar-codigo', { username, code });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Código incorrecto'));
+  }
+}
+
+export async function reenviarCodigo(username: string): Promise<void> {
+  try {
+    await api.post('/auth/reenviar-codigo', { username });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Error al reenviar el código'));
+  }
+}
+
+export async function recuperar(username: string): Promise<void> {
+  try {
+    await api.post('/auth/recuperar', { username });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Error al solicitar la recuperación'));
+  }
+}
+
+export async function recuperarConfirmar(
+  username: string,
+  code: string,
+  nuevaPassword: string
+): Promise<void> {
+  try {
+    await api.post('/auth/recuperar-confirmar', {
+      username,
+      code,
+      nueva_password: nuevaPassword,
+    });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Código incorrecto'));
   }
 }

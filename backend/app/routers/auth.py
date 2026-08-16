@@ -12,6 +12,12 @@ from app.core.audit import registrar
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user, get_current_user_optional, require_role
+from app.core.email import (
+    codigo_correcto,
+    codigo_vencido,
+    correo_configurado,
+    enviar_codigo,
+)
 from app.core.security import (
     create_access_token,
     create_mfa_token,
@@ -24,12 +30,17 @@ from app.models.organization import Organization
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
 from app.schemas import (
+    CodigoVerificacionRequest,
     LoginResponse,
     MfaCodeRequest,
     MfaConfirmRequest,
     MfaRequired,
     MfaSetupOut,
     MfaVerifyRequest,
+    RecuperarConfirmarRequest,
+    RecuperarRequest,
+    ReenviarCodigoRequest,
+    RegistroOut,
     RefreshRequest,
     Token,
     UserCreate,
@@ -65,7 +76,7 @@ def _register_failure(username: str) -> None:
         _failed[username].append(datetime.now(timezone.utc))
 
 
-@router.post("/register", response_model=UserOut)
+@router.post("/register", response_model=RegistroOut)
 def register(
     user: UserCreate,
     db: Session = Depends(get_db),
@@ -76,6 +87,9 @@ def register(
     El PRIMER usuario registrado se convierte en administrador y su cuenta
     crea una organización independiente. A partir de ahí, solo los
     administradores pueden crear usuarios dentro de su propia empresa.
+
+    Si el correo está configurado en el servidor, la primera cuenta (la del
+    dueño) se crea inactiva y recibe un código por correo para activarla.
     """
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
@@ -106,11 +120,19 @@ def register(
         organization_id = admin.organization_id
         es_bootstrap = False
 
+    requiere_verificacion = (
+        es_bootstrap
+        and correo_configurado()
+        and bool(user.correo)
+    )
+
     new_user = User(
         organization_id=organization_id,
         username=user.username,
         hashed_password=get_password_hash(user.password),
         rol=rol,
+        activo=not requiere_verificacion,
+        correo=user.correo if es_bootstrap else None,
     )
     db.add(new_user)
     db.commit()
@@ -126,7 +148,160 @@ def register(
         username=new_user.username,
         organization_id=organization_id,
     )
+
+    if requiere_verificacion:
+        hash_codigo, vigencia = enviar_codigo(
+            user.correo,
+            "Verifica tu cuenta de Librería App",
+            f"Hola {new_user.username}, ya casi está. Verifica tu cuenta con este código:",
+        )
+        new_user.codigo_verificacion = hash_codigo
+        new_user.codigo_expira = datetime.utcnow() + vigencia
+        db.commit()
+        respuesta = UserOut.model_validate(new_user).model_dump()
+        respuesta["requiere_verificacion"] = True
+        respuesta["mensaje"] = (
+            "Te enviamos un código a tu correo. Revisa tu bandeja de entrada "
+            "e ingrésalo para activar tu cuenta."
+        )
+        return respuesta
     return new_user
+
+
+@router.post("/verificar-codigo")
+def verificar_codigo(
+    datos: CodigoVerificacionRequest,
+    db: Session = Depends(get_db),
+):
+    """Activa la cuenta con el código recibido por correo."""
+    user = db.query(User).filter(User.username == datos.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not user.codigo_verificacion:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay un código pendiente. Solicita uno nuevo.",
+        )
+    if codigo_vencido(user.codigo_expira):
+        raise HTTPException(
+            status_code=400,
+            detail="El código expiró. Solicita uno nuevo.",
+        )
+    if not codigo_correcto(user.codigo_verificacion, datos.code):
+        raise HTTPException(status_code=401, detail="Código incorrecto")
+
+    user.activo = True
+    user.codigo_verificacion = None
+    user.codigo_expira = None
+    db.commit()
+    registrar(
+        db,
+        accion="verificar",
+        recurso="usuario",
+        recurso_id=user.id,
+        detalle=f"Correo verificado para '{user.username}'",
+        usuario_id=user.id,
+        username=user.username,
+        organization_id=user.organization_id,
+    )
+    return {"ok": True}
+
+
+@router.post("/reenviar-codigo")
+def reenviar_codigo(
+    datos: ReenviarCodigoRequest,
+    db: Session = Depends(get_db),
+):
+    """Regenera y reenvía el código de verificación."""
+    user = db.query(User).filter(User.username == datos.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if user.activo:
+        raise HTTPException(status_code=400, detail="La cuenta ya está activa")
+    if not user.correo:
+        raise HTTPException(
+            status_code=400,
+            detail="El usuario no tiene correo registrado",
+        )
+    try:
+        hash_codigo, vigencia = enviar_codigo(
+            user.correo,
+            "Nuevo código de verificación",
+            f"Hola {user.username}, aquí tienes un código nuevo:",
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    user.codigo_verificacion = hash_codigo
+    user.codigo_expira = datetime.utcnow() + vigencia
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/recuperar")
+def recuperar(
+    datos: RecuperarRequest,
+    db: Session = Depends(get_db),
+):
+    """Envía un código por correo para restablecer la contraseña."""
+    user = db.query(User).filter(User.username == datos.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not user.correo:
+        raise HTTPException(
+            status_code=400,
+            detail="El usuario no tiene correo registrado. Contacta a tu administrador.",
+        )
+    try:
+        hash_codigo, vigencia = enviar_codigo(
+            user.correo,
+            "Recupera tu contraseña de Librería App",
+            f"Hola {user.username}, usa este código para restablecer tu contraseña:",
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    user.codigo_verificacion = hash_codigo
+    user.codigo_expira = datetime.utcnow() + vigencia
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/recuperar-confirmar")
+def recuperar_confirmar(
+    datos: RecuperarConfirmarRequest,
+    db: Session = Depends(get_db),
+):
+    """Valida el código y cambia la contraseña."""
+    user = db.query(User).filter(User.username == datos.username).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    if not user.codigo_verificacion:
+        raise HTTPException(
+            status_code=400,
+            detail="No hay un código pendiente. Solicita uno nuevo.",
+        )
+    if codigo_vencido(user.codigo_expira):
+        raise HTTPException(
+            status_code=400,
+            detail="El código expiró. Solicita uno nuevo.",
+        )
+    if not codigo_correcto(user.codigo_verificacion, datos.code):
+        raise HTTPException(status_code=401, detail="Código incorrecto")
+
+    user.hashed_password = get_password_hash(datos.nueva_password)
+    user.codigo_verificacion = None
+    user.codigo_expira = None
+    db.commit()
+    registrar(
+        db,
+        accion="editar",
+        recurso="usuario",
+        recurso_id=user.id,
+        detalle=f"Contraseña restablecida para '{user.username}' (recuperación)",
+        usuario_id=user.id,
+        username=user.username,
+        organization_id=user.organization_id,
+    )
+    return {"ok": True}
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -147,7 +322,11 @@ def login(
     if not user.activo:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Usuario desactivado",
+            detail=(
+                "Verifica tu correo antes de iniciar sesión"
+                if user.codigo_verificacion
+                else "Usuario desactivado. Contacta a tu administrador."
+            ),
         )
 
     # Si el usuario tiene MFA activado, primero hay que validar el código
