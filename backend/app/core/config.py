@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     R2_BUCKET: str = ""
     R2_PUBLIC_URL: str = ""
 
+    CLOUDINARY_CLOUD_NAME: str = ""
+    CLOUDINARY_API_KEY: str = ""
+    CLOUDINARY_API_SECRET: str = ""
+
     model_config = SettingsConfigDict(env_file=".env")
 
 

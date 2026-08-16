@@ -37,9 +37,18 @@ def _registrar_bootstrap(client, **extra):
 
 class TestVerificacionCorreo:
     def test_registro_sin_correo_configurado_queda_activo(self, client):
-        """Sin SMTP la app funciona igual que antes (sin verificación)."""
-        response = _registrar_bootstrap(client)
+        """Sin correo (aunque SMTP exista) la app funciona igual que antes."""
+        response = _registrar_bootstrap(client, correo=None)
         assert response.status_code == 200
+        data = response.json()
+        assert data["activo"] is True
+        assert data["requiere_verificacion"] is False
+
+    def test_registro_sin_smtp_no_exige_codigo_aunque_haya_correo(self, client, monkeypatch):
+        """Sin SMTP configurado, registrar con correo no bloquea la cuenta."""
+        monkeypatch.setattr(auth_mod, "correo_configurado", lambda: False)
+        monkeypatch.setattr(email_mod, "correo_configurado", lambda: False)
+        response = _registrar_bootstrap(client)
         data = response.json()
         assert data["activo"] is True
         assert data["requiere_verificacion"] is False

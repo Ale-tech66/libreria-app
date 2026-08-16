@@ -1,5 +1,7 @@
 from pathlib import Path
+import time
 
+import requests
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
@@ -42,6 +44,67 @@ def _r2_activo() -> bool:
     )
 
 
+def _cloudinary_activo() -> bool:
+    return bool(
+        settings.CLOUDINARY_CLOUD_NAME
+        and settings.CLOUDINARY_API_KEY
+        and settings.CLOUDINARY_API_SECRET
+    )
+
+
+def _cloudinary_firma(params: dict) -> str:
+    import hashlib
+
+    cadena = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    return hashlib.sha1((cadena + settings.CLOUDINARY_API_SECRET).encode()).hexdigest()
+
+
+def _cloudinary_subir(contenido: bytes, content_type: str) -> str:
+    timestamp = int(time.time())
+    params = {"folder": "productos", "timestamp": timestamp}
+    firma = _cloudinary_firma(params)
+    respuesta = requests.post(
+        f"https://api.cloudinary.com/v1_1/{settings.CLOUDINARY_CLOUD_NAME}/auto/upload",
+        data={**params, "api_key": settings.CLOUDINARY_API_KEY, "signature": firma},
+        files={"file": ("foto", contenido, content_type)},
+        timeout=60,
+    )
+    if respuesta.status_code >= 400:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo subir la foto a Cloudinary: {respuesta.text[:200]}",
+        )
+    return respuesta.json()["secure_url"]
+
+
+def _cloudinary_public_id(url: str) -> str | None:
+    marca = "/image/upload/"
+    if marca not in url:
+        return None
+    resto = url.split(marca, 1)[1]
+    partes = resto.split("/")
+    if partes and partes[0].startswith("v") and partes[0][1:].isdigit():
+        partes = partes[1:]
+    return "/".join(partes) if partes else None
+
+
+def _cloudinary_borrar(url: str) -> None:
+    public_id = _cloudinary_public_id(url)
+    if not public_id:
+        return
+    timestamp = int(time.time())
+    params = {"public_id": public_id, "timestamp": timestamp}
+    firma = _cloudinary_firma(params)
+    try:
+        requests.post(
+            f"https://api.cloudinary.com/v1_1/{settings.CLOUDINARY_CLOUD_NAME}/image/destroy",
+            data={**params, "api_key": settings.CLOUDINARY_API_KEY, "signature": firma},
+            timeout=30,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
     if archivo.content_type not in TIPOS_PERMITIDOS:
         raise HTTPException(
@@ -58,6 +121,10 @@ def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
         "image/png": ".png",
         "image/webp": ".webp",
     }[archivo.content_type]
+
+    if _cloudinary_activo():
+        # Cloudinary: la foto vive en la nube y devolvemos su URL pública
+        return _cloudinary_subir(contenido, archivo.content_type)
 
     if _r2_activo():
         # Object storage: la foto vive en R2 y devolvemos su URL pública
@@ -80,6 +147,10 @@ def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
 
 def _borrar_foto(foto: str | None) -> None:
     if not foto:
+        return
+    if foto.startswith("http") and _cloudinary_activo():
+        # URL pública de Cloudinary: borra la imagen remota
+        _cloudinary_borrar(foto)
         return
     if foto.startswith("http") and _r2_activo():
         # URL pública de R2: borra el objeto

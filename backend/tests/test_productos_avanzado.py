@@ -111,3 +111,67 @@ class TestFoto:
             files={"archivo": ("a.png", b"x", "image/png")},
         )
         assert response.status_code == 403
+
+
+class TestFotoCloudinary:
+    URL_FALSA = "https://res.cloudinary.com/nube-test/image/upload/v1/productos/producto_1.png"
+
+    def _activar(self, monkeypatch):
+        from app.core import config
+
+        monkeypatch.setattr(config.settings, "CLOUDINARY_CLOUD_NAME", "nube-test")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_API_KEY", "123")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_API_SECRET", "abc")
+
+    def _fake_post(self, monkeypatch, respuestas):
+        import app.routers.productos as mod
+
+        llamadas = []
+
+        class Respuesta:
+            status_code = 200
+            text = ""
+
+            def json(self):
+                return respuestas.pop(0)
+
+        def post_falso(url, **kwargs):
+            llamadas.append({"url": url, "data": kwargs.get("data", {})})
+            return Respuesta()
+
+        monkeypatch.setattr(mod.requests, "post", post_falso)
+        return llamadas
+
+    def test_subir_foto_cloudinary(self, client, admin_token, monkeypatch):
+        self._activar(monkeypatch)
+        llamadas = self._fake_post(monkeypatch, [{"secure_url": self.URL_FALSA}])
+        producto = crear_producto(client, admin_token)
+        response = client.post(
+            f"/productos/{producto['id']}/foto",
+            headers=auth(admin_token),
+            files={"archivo": ("a.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+        )
+        assert response.status_code == 200
+        assert response.json()["foto"] == self.URL_FALSA
+        assert "api.cloudinary.com" in llamadas[0]["url"]
+        assert "signature" in llamadas[0]["data"]
+        assert "timestamp" in llamadas[0]["data"]
+
+    def test_reemplazar_foto_borra_anterior(self, client, admin_token, monkeypatch):
+        self._activar(monkeypatch)
+        llamadas = self._fake_post(
+            monkeypatch,
+            [{"secure_url": self.URL_FALSA}, {"secure_url": self.URL_FALSA + "2"}],
+        )
+        producto = crear_producto(client, admin_token)
+        for i in range(2):
+            response = client.post(
+                f"/productos/{producto['id']}/foto",
+                headers=auth(admin_token),
+                files={"archivo": (f"a{i}.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+            )
+            assert response.status_code == 200
+        assert llamadas[1]["url"].endswith("/auto/upload")
+        assert llamadas[2]["url"].endswith("/image/destroy")
+        assert "public_id" in llamadas[2]["data"]
+        assert llamadas[2]["data"]["public_id"] == "productos/producto_1.png"
