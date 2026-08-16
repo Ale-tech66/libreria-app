@@ -36,7 +36,7 @@ class _SMTP(smtplib.SMTP):
                 errores.append(e)
                 continue
             try:
-                return socket.create_connection(infos[0][4], timeout, self.source_address)
+                return socket.create_connection(infos[0][4][:2], timeout, self.source_address)
             except OSError as e:
                 errores.append(e)
         if errores:
