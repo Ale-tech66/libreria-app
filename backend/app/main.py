@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -8,10 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.core.backups import planificador_respaldos
 from app.core.config import settings
 from app.core.database import engine
 from app.models import audit, user, producto, venta  # noqa: F401  (registra los modelos)
-from app.routers import auth, auditoria, productos, ventas
+from app.routers import auth, auditoria, backups, productos, ventas
 
 logger = logging.getLogger("libreria")
 
@@ -21,7 +23,9 @@ logger = logging.getLogger("libreria")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    tarea = asyncio.create_task(planificador_respaldos())
     yield
+    tarea.cancel()
     engine.dispose()
 
 
@@ -70,6 +74,7 @@ app.include_router(auth.router)
 app.include_router(auditoria.router)
 app.include_router(productos.router)
 app.include_router(ventas.router)
+app.include_router(backups.router)
 
 # Fotos de productos (acceso público de solo lectura)
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)

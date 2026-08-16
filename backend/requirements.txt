@@ -8,3 +8,4 @@ bcrypt
 python-multipart
 alembic
 pyotp
+requests>=2.32.0

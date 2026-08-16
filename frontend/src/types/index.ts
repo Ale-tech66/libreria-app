@@ -151,3 +151,15 @@ export interface AuditLog {
   detalle: string | null;
   fecha: string;
 }
+
+export interface TelegramEstado {
+  bot_token_guardado: boolean;
+  bot_token_sufijo: string | null;
+  chat_id: string | null;
+}
+
+export interface TelegramResultado {
+  ok: boolean;
+  chat_id: string | null;
+  detalle: string;
+}

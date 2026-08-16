@@ -1,10 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
+import {
+  configurarTelegram,
+  descargarRespaldo,
+  getEstadoTelegram,
+  probarTelegram,
+} from '@/api/backups';
 import MfaConfigModal from '@/components/MfaConfigModal';
-import { ThemedButton, ThemedCard, ThemedHeader, ThemedScreen } from '@/design/components';
+import { ThemedButton, ThemedCard, ThemedHeader, ThemedInput, ThemedScreen } from '@/design/components';
 import { useTheme } from '@/design/ThemeContext';
 import { useAuth } from '@/hooks/useAuth';
 import { Theme, ThemeId } from '@/design/themes';
@@ -13,6 +19,7 @@ export default function AjustesScreen() {
   const { tema, temas, setTemaId } = useTheme();
   const { user, logout } = useAuth();
   const [showMfa, setShowMfa] = useState(false);
+  const esAdmin = user?.rol === 'admin';
 
   return (
     <ThemedScreen scroll>
@@ -57,6 +64,8 @@ export default function AjustesScreen() {
           />
         </ThemedCard>
 
+        {esAdmin && <SeccionRespaldo />}
+
         <Text style={[styles.seccion, { color: tema.textoSuave }]}>CUENTA</Text>
         <ThemedCard style={styles.tarjetaCuenta}>
           <View style={[styles.avatar, { backgroundColor: tema.primario }]}>
@@ -92,6 +101,144 @@ export default function AjustesScreen() {
 
       <MfaConfigModal visible={showMfa} onClose={() => setShowMfa(false)} />
     </ThemedScreen>
+  );
+}
+
+function SeccionRespaldo() {
+  const { tema } = useTheme();
+  const [token, setToken] = useState('');
+  const [estado, setEstado] = useState<string | null>(null);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [tokenGuardado, setTokenGuardado] = useState(false);
+  const [descargando, setDescargando] = useState(false);
+  const [guardando, setGuardando] = useState(false);
+
+  const cargarEstado = useCallback(async () => {
+    try {
+      const data = await getEstadoTelegram();
+      setTokenGuardado(data.bot_token_guardado);
+      setChatId(data.chat_id);
+    } catch {
+      // Sin red o sin permiso: se muestra la sección sin estado
+    }
+  }, []);
+
+  useEffect(() => {
+    cargarEstado();
+  }, [cargarEstado]);
+
+  const handleDescargar = async () => {
+    setDescargando(true);
+    try {
+      await descargarRespaldo();
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Error al descargar el respaldo');
+    } finally {
+      setDescargando(false);
+    }
+  };
+
+  const handleGuardar = async () => {
+    if (!token.trim()) {
+      Alert.alert('Aviso', 'Pega el token que te dio @BotFather');
+      return;
+    }
+    setGuardando(true);
+    setEstado(null);
+    try {
+      const resultado = await configurarTelegram(token);
+      setChatId(resultado.chat_id);
+      setTokenGuardado(true);
+      setToken('');
+      setEstado(
+        resultado.chat_id
+          ? `Conectado al chat: ${resultado.chat_id}`
+          : resultado.detalle
+      );
+    } catch (e) {
+      setEstado(e instanceof Error ? e.message : 'Error al guardar');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const handleProbar = async () => {
+    setGuardando(true);
+    try {
+      const resultado = await probarTelegram();
+      Alert.alert('Listo', resultado.detalle);
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Error al enviar la prueba');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <>
+      <Text style={[styles.seccion, { color: tema.textoSuave }]}>RESPALDOS</Text>
+
+      <ThemedCard style={styles.tarjetaCuenta}>
+        <View style={[styles.avatar, { backgroundColor: tema.primario }]}>
+          <Ionicons name="cloud-download-outline" size={26} color={tema.primarioTexto} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.usuario, { color: tema.texto }]}>Descargar respaldo</Text>
+          <Text style={[styles.rol, { color: tema.textoSuave }]}>
+            Copia completa de tus datos (productos, ventas, usuarios)
+          </Text>
+        </View>
+        <ThemedButton
+          titulo="Descargar"
+          icono="download-outline"
+          variante="secundario"
+          onPress={handleDescargar}
+          loading={descargando}
+          style={{ minHeight: 40, paddingVertical: 8, paddingHorizontal: 14 }}
+        />
+      </ThemedCard>
+
+      <ThemedCard style={styles.tarjetaTelegram}>
+        <Text style={[styles.usuario, { color: tema.texto }]}>Respaldo automático por Telegram</Text>
+        <Text style={[styles.rol, { color: tema.textoSuave }]}>
+          Cada día a las 11:00 PM se enviará el respaldo a tu chat de Telegram.
+        </Text>
+        {tokenGuardado && (
+          <Text style={[styles.rol, { color: tema.exito }]}>
+            {chatId ? `Conectado: ${chatId}` : 'Bot guardado'}
+          </Text>
+        )}
+        <ThemedInput
+          icono="paper-plane-outline"
+          placeholder="Token del bot (@BotFather)"
+          secureTextEntry
+          autoCapitalize="none"
+          value={token}
+          onChangeText={setToken}
+          style={{ marginTop: 10 }}
+        />
+        <View style={styles.filaTelegram}>
+          <ThemedButton
+            titulo="Guardar bot"
+            icono="save-outline"
+            onPress={handleGuardar}
+            loading={guardando}
+            style={{ flex: 1 }}
+          />
+          <ThemedButton
+            titulo="Probar"
+            icono="send-outline"
+            variante="secundario"
+            onPress={handleProbar}
+            disabled={!tokenGuardado}
+            style={{ flex: 1 }}
+          />
+        </View>
+        {estado && (
+          <Text style={[styles.rol, { color: tema.advertencia, marginTop: 8 }]}>{estado}</Text>
+        )}
+      </ThemedCard>
+    </>
   );
 }
 
@@ -193,6 +340,16 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 16,
     marginBottom: 14,
+  },
+  tarjetaTelegram: {
+    padding: 16,
+    marginBottom: 14,
+    gap: 4,
+  },
+  filaTelegram: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 10,
   },
   avatar: {
     width: 48,
