@@ -37,6 +37,7 @@ class UserOut(BaseModel):
     activo: bool
     organizacion: Optional[str] = None
     mfa_activo: Optional[bool] = None
+    correo: Optional[str] = None
 
     @field_validator("organizacion", mode="before")
     @classmethod

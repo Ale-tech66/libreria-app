@@ -8,6 +8,7 @@ export interface User {
   activo: boolean;
   organizacion?: string | null;
   mfa_activo?: boolean | null;
+  correo?: string | null;
 }
 
 export interface MfaRequired {

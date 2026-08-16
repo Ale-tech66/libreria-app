@@ -9,6 +9,7 @@ import {
   getEstadoTelegram,
   probarTelegram,
 } from '@/api/backups';
+import { actualizarCorreo } from '@/api/auth';
 import MfaConfigModal from '@/components/MfaConfigModal';
 import { ThemedButton, ThemedCard, ThemedHeader, ThemedInput, ThemedScreen } from '@/design/components';
 import { useTheme } from '@/design/ThemeContext';
@@ -67,20 +68,7 @@ export default function AjustesScreen() {
         {esAdmin && <SeccionRespaldo />}
 
         <Text style={[styles.seccion, { color: tema.textoSuave }]}>CUENTA</Text>
-        <ThemedCard style={styles.tarjetaCuenta}>
-          <View style={[styles.avatar, { backgroundColor: tema.primario }]}>
-            <Ionicons name="person" size={26} color={tema.primarioTexto} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.usuario, { color: tema.texto }]}>{user?.username}</Text>
-            <Text style={[styles.rol, { color: tema.textoSuave }]}>Rol: {user?.rol}</Text>
-            {user?.organizacion ? (
-              <Text style={[styles.rol, { color: tema.textoSuave }]}>
-                Empresa: {user.organizacion}
-              </Text>
-            ) : null}
-          </View>
-        </ThemedCard>
+        <TarjetaCuenta />
 
         <ThemedButton
           titulo="CERRAR SESIÓN"
@@ -101,6 +89,66 @@ export default function AjustesScreen() {
 
       <MfaConfigModal visible={showMfa} onClose={() => setShowMfa(false)} />
     </ThemedScreen>
+  );
+}
+
+function TarjetaCuenta() {
+  const { tema } = useTheme();
+  const { user, refrescarUsuario } = useAuth();
+  const [correo, setCorreo] = useState(user?.correo ?? '');
+  const [guardando, setGuardando] = useState(false);
+
+  const handleGuardarCorreo = async () => {
+    if (!correo.trim() || !correo.includes('@')) {
+      Alert.alert('Aviso', 'Ingresa un correo válido');
+      return;
+    }
+    setGuardando(true);
+    try {
+      await actualizarCorreo(correo.trim());
+      await refrescarUsuario();
+      Alert.alert('Listo', 'Correo guardado. Lo usarás para recuperar tu contraseña.');
+    } catch (e) {
+      Alert.alert('Error', e instanceof Error ? e.message : 'Error al guardar el correo');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <ThemedCard style={styles.tarjetaCuenta}>
+      <View style={[styles.avatar, { backgroundColor: tema.primario }]}>
+        <Ionicons name="person" size={26} color={tema.primarioTexto} />
+      </View>
+      <View style={{ flex: 1 }}>
+        <Text style={[styles.usuario, { color: tema.texto }]}>{user?.username}</Text>
+        <Text style={[styles.rol, { color: tema.textoSuave }]}>Rol: {user?.rol}</Text>
+        {user?.organizacion ? (
+          <Text style={[styles.rol, { color: tema.textoSuave }]}>
+            Empresa: {user.organizacion}
+          </Text>
+        ) : null}
+        <ThemedInput
+          icono="mail-outline"
+          label="Tu correo"
+          placeholder="Para recuperar tu contraseña"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="email-address"
+          value={correo}
+          onChangeText={setCorreo}
+          style={{ marginTop: 8 }}
+        />
+        <ThemedButton
+          titulo="Guardar correo"
+          icono="save-outline"
+          variante="secundario"
+          onPress={handleGuardarCorreo}
+          loading={guardando}
+          style={{ marginTop: 8, minHeight: 40, paddingVertical: 8, paddingHorizontal: 14 }}
+        />
+      </View>
+    </ThemedCard>
   );
 }
 

@@ -6,6 +6,7 @@ import pyotp
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar
@@ -235,6 +236,24 @@ def reenviar_codigo(
     user.codigo_expira = datetime.utcnow() + vigencia
     db.commit()
     return {"ok": True}
+
+
+class CorreoUpdateRequest(BaseModel):
+    correo: str = Field(min_length=3, max_length=200)
+
+
+@router.put("/correo")
+def actualizar_correo(
+    datos: CorreoUpdateRequest,
+    db: Session = Depends(get_db),
+    usuario: User = Depends(get_current_user),
+):
+    """Guarda el correo del usuario (para verificación y recuperación)."""
+    if "@" not in datos.correo:
+        raise HTTPException(status_code=400, detail="El correo no es válido")
+    usuario.correo = datos.correo.strip()
+    db.commit()
+    return {"ok": True, "correo": usuario.correo}
 
 
 @router.post("/recuperar")

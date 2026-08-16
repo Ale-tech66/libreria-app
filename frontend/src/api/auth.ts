@@ -144,3 +144,11 @@ export async function recuperarConfirmar(
     throw new Error(getErrorMessage(error, 'Código incorrecto'));
   }
 }
+
+export async function actualizarCorreo(correo: string): Promise<void> {
+  try {
+    await api.put('/auth/correo', { correo });
+  } catch (error) {
+    throw new Error(getErrorMessage(error, 'Error al guardar el correo'));
+  }
+}
