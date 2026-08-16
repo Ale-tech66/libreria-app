@@ -8,6 +8,7 @@ import hmac
 import logging
 import secrets
 import smtplib
+import socket
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
@@ -16,6 +17,35 @@ from app.core.config import settings
 logger = logging.getLogger("libreria")
 
 CODIGO_MINUTOS_VALIDO = 15
+
+
+class _SMTP(smtplib.SMTP):
+    """SMTP que conecta forzando IPv4 primero.
+
+    En hosts sin IPv6 (como algunos entornos de nube) la resolución
+    devuelve direcciones IPv6 y el intento falla con
+    'OSError: Network is unreachable'. Al probar IPv4 primero se evita.
+    """
+
+    def _get_socket(self, host, port, timeout):
+        errores: list[Exception] = []
+        for familia in (socket.AF_INET, socket.AF_INET6):
+            try:
+                infos = socket.getaddrinfo(host, port, familia, socket.SOCK_STREAM)
+            except socket.gaierror as e:
+                errores.append(e)
+                continue
+            try:
+                return socket.create_connection(infos[0][4], timeout, self.source_address)
+            except OSError as e:
+                errores.append(e)
+        if errores:
+            raise errores[-1]
+        raise socket.gaierror(f"No se pudo resolver {host}")
+
+
+class _SMTP_SSL(_SMTP, smtplib.SMTP_SSL):
+    """Idéntico a _SMTP pero con TLS implícito (puerto 465)."""
 
 
 def correo_configurado() -> bool:
@@ -53,11 +83,27 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> None:
     mensaje["To"] = destinatario
     mensaje["Subject"] = asunto
     mensaje.set_content(cuerpo)
-    with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=30) as smtp:
-        smtp.starttls()
-        smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-        smtp.send_message(mensaje)
-    logger.info("Correo enviado a %s: %s", destinatario, asunto)
+
+    # Prueba el puerto configurado y, si la red falla, el alternativo (465/587)
+    alternativo = 465 if settings.SMTP_PORT != 465 else 587
+    ultimo_error: Exception | None = None
+    for puerto in (settings.SMTP_PORT, alternativo):
+        try:
+            clase = _SMTP_SSL if puerto == 465 else _SMTP
+            with clase(settings.SMTP_HOST, puerto, timeout=30) as smtp:
+                if puerto != 465:
+                    smtp.starttls()
+                smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                smtp.send_message(mensaje)
+            logger.info("Correo enviado a %s: %s", destinatario, asunto)
+            return
+        except OSError as e:
+            # Error de red: probamos el otro puerto antes de rendirnos
+            ultimo_error = e
+        except smtplib.SMTPException:
+            # Error de protocolo o credenciales: no tiene sentido probar otro puerto
+            raise
+    raise RuntimeError(f"No se pudo enviar el correo: {ultimo_error}")
 
 
 def enviar_codigo(destinatario: str, asunto: str, cuerpo_antes_codigo: str) -> str:
