@@ -75,7 +75,16 @@ class TestSoftDelete:
 
 
 class TestFoto:
-    def test_subir_foto(self, client, admin_token):
+    def _sin_cloudinary(self, monkeypatch):
+        from app.core import config
+
+        monkeypatch.setattr(config.settings, "CLOUDINARY_CLOUD_NAME", "")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_UPLOAD_PRESET", "")
+        monkeypatch.setattr(config.settings, "R2_ACCOUNT_ID", "")
+        monkeypatch.setattr(config.settings, "R2_BUCKET", "")
+
+    def test_subir_foto(self, client, admin_token, monkeypatch):
+        self._sin_cloudinary(monkeypatch)
         producto = crear_producto(client, admin_token)
         response = client.post(
             f"/productos/{producto['id']}/foto",
@@ -122,6 +131,15 @@ class TestFotoCloudinary:
         monkeypatch.setattr(config.settings, "CLOUDINARY_CLOUD_NAME", "nube-test")
         monkeypatch.setattr(config.settings, "CLOUDINARY_API_KEY", "123")
         monkeypatch.setattr(config.settings, "CLOUDINARY_API_SECRET", "abc")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_UPLOAD_PRESET", "")
+
+    def _activar_preset(self, monkeypatch):
+        from app.core import config
+
+        monkeypatch.setattr(config.settings, "CLOUDINARY_CLOUD_NAME", "nube-test")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_UPLOAD_PRESET", "libreria-preset")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_API_KEY", "")
+        monkeypatch.setattr(config.settings, "CLOUDINARY_API_SECRET", "")
 
     def _fake_post(self, monkeypatch, respuestas):
         import app.routers.productos as mod
@@ -156,6 +174,23 @@ class TestFotoCloudinary:
         assert "api.cloudinary.com" in llamadas[0]["url"]
         assert "signature" in llamadas[0]["data"]
         assert "timestamp" in llamadas[0]["data"]
+
+    def test_subir_foto_preset_sin_firma(self, client, admin_token, monkeypatch):
+        """Con upload preset sin firmar no se envían firma ni api_key."""
+        self._activar_preset(monkeypatch)
+        llamadas = self._fake_post(monkeypatch, [{"secure_url": self.URL_FALSA}])
+        producto = crear_producto(client, admin_token)
+        response = client.post(
+            f"/productos/{producto['id']}/foto",
+            headers=auth(admin_token),
+            files={"archivo": ("a.png", b"\x89PNG\r\n\x1a\nfake", "image/png")},
+        )
+        assert response.status_code == 200
+        assert response.json()["foto"] == self.URL_FALSA
+        data = llamadas[0]["data"]
+        assert data["upload_preset"] == "libreria-preset"
+        assert "signature" not in data
+        assert "api_key" not in data
 
     def test_reemplazar_foto_borra_anterior(self, client, admin_token, monkeypatch):
         self._activar(monkeypatch)

@@ -45,11 +45,11 @@ def _r2_activo() -> bool:
 
 
 def _cloudinary_activo() -> bool:
-    return bool(
-        settings.CLOUDINARY_CLOUD_NAME
-        and settings.CLOUDINARY_API_KEY
-        and settings.CLOUDINARY_API_SECRET
-    )
+    if not settings.CLOUDINARY_CLOUD_NAME:
+        return False
+    if settings.CLOUDINARY_UPLOAD_PRESET:
+        return True
+    return bool(settings.CLOUDINARY_API_KEY and settings.CLOUDINARY_API_SECRET)
 
 
 def _cloudinary_firma(params: dict) -> str:
@@ -60,12 +60,23 @@ def _cloudinary_firma(params: dict) -> str:
 
 
 def _cloudinary_subir(contenido: bytes, content_type: str) -> str:
-    timestamp = int(time.time())
-    params = {"folder": "productos", "timestamp": timestamp}
-    firma = _cloudinary_firma(params)
+    url = (
+        f"https://api.cloudinary.com/v1_1/{settings.CLOUDINARY_CLOUD_NAME}/auto/upload"
+    )
+    if settings.CLOUDINARY_UPLOAD_PRESET:
+        # Preset sin firmar: no hace falta firma ni secreto
+        data = {"upload_preset": settings.CLOUDINARY_UPLOAD_PRESET}
+    else:
+        timestamp = int(time.time())
+        params = {"folder": "productos", "timestamp": timestamp}
+        data = {
+            **params,
+            "api_key": settings.CLOUDINARY_API_KEY,
+            "signature": _cloudinary_firma(params),
+        }
     respuesta = requests.post(
-        f"https://api.cloudinary.com/v1_1/{settings.CLOUDINARY_CLOUD_NAME}/auto/upload",
-        data={**params, "api_key": settings.CLOUDINARY_API_KEY, "signature": firma},
+        url,
+        data=data,
         files={"file": ("foto", contenido, content_type)},
         timeout=60,
     )
