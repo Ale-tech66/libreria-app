@@ -49,6 +49,8 @@ class _SMTP_SSL(_SMTP, smtplib.SMTP_SSL):
 
 
 def correo_configurado() -> bool:
+    if settings.BREVO_API_KEY:
+        return True
     return bool(settings.SMTP_HOST and settings.SMTP_USER and settings.SMTP_PASSWORD)
 
 
@@ -73,6 +75,32 @@ def codigo_vencido(expira: datetime | None) -> bool:
     return datetime.utcnow() > expira
 
 
+def _enviar_por_brevo(destinatario: str, asunto: str, cuerpo: str) -> None:
+    """Envía vía la API HTTP de Brevo (funciona aunque los puertos SMTP estén bloqueados)."""
+    import requests
+
+    respuesta = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "api-key": settings.BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        json={
+            "sender": {
+                "name": "Librería App",
+                "email": settings.SMTP_FROM or settings.SMTP_USER,
+            },
+            "to": [{"email": destinatario}],
+            "subject": asunto,
+            "textContent": cuerpo,
+        },
+        timeout=30,
+    )
+    if respuesta.status_code >= 400:
+        raise RuntimeError(f"Brevo rechazó el correo: {respuesta.text[:200]}")
+
+
 def enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> None:
     if not correo_configurado():
         raise RuntimeError(
@@ -83,6 +111,11 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> None:
     mensaje["To"] = destinatario
     mensaje["Subject"] = asunto
     mensaje.set_content(cuerpo)
+
+    if settings.BREVO_API_KEY:
+        _enviar_por_brevo(destinatario, asunto, cuerpo)
+        logger.info("Correo enviado a %s (Brevo): %s", destinatario, asunto)
+        return
 
     # Prueba el puerto configurado y, si la red falla, el alternativo (465/587)
     alternativo = 465 if settings.SMTP_PORT != 465 else 587

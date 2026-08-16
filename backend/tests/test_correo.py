@@ -35,6 +35,58 @@ def _registrar_bootstrap(client, **extra):
     return client.post("/auth/register", json=payload)
 
 
+class TestBrevo:
+    def test_correo_configurado_con_solo_brevo(self, monkeypatch):
+        from app.core import config
+
+        monkeypatch.setattr(config.settings, "BREVO_API_KEY", "clave-brevo")
+        monkeypatch.setattr(config.settings, "SMTP_HOST", "")
+        monkeypatch.setattr(config.settings, "SMTP_USER", "")
+        monkeypatch.setattr(config.settings, "SMTP_PASSWORD", "")
+        assert email_mod.correo_configurado() is True
+
+    def test_envia_via_api_brevo(self, monkeypatch):
+        from app.core import config
+
+        monkeypatch.setattr(config.settings, "BREVO_API_KEY", "clave-brevo")
+        monkeypatch.setattr(config.settings, "SMTP_HOST", "")
+        monkeypatch.setattr(config.settings, "SMTP_USER", "gestion.app2000@gmail.com")
+        monkeypatch.setattr(config.settings, "SMTP_FROM", "gestion.app2000@gmail.com")
+
+        llamadas: dict = {}
+
+        class Respuesta:
+            status_code = 201
+            text = "ok"
+
+        def post_falso(url, **kwargs):
+            llamadas["url"] = url
+            llamadas["headers"] = kwargs.get("headers", {})
+            llamadas["json"] = kwargs.get("json", {})
+            return Respuesta()
+
+        monkeypatch.setattr("requests.post", post_falso)
+        email_mod.enviar_correo("a@b.com", "Asunto", "Cuerpo")
+        assert llamadas["url"] == "https://api.brevo.com/v3/smtp/email"
+        assert llamadas["headers"]["api-key"] == "clave-brevo"
+        assert llamadas["json"]["to"] == [{"email": "a@b.com"}]
+        assert llamadas["json"]["subject"] == "Asunto"
+
+    def test_brevo_rechaza_con_runtimeerror(self, monkeypatch):
+        from app.core import config
+
+        monkeypatch.setattr(config.settings, "BREVO_API_KEY", "clave-mala")
+        monkeypatch.setattr(config.settings, "SMTP_HOST", "")
+
+        class Respuesta:
+            status_code = 401
+            text = '{"message":"bad key"}'
+
+        monkeypatch.setattr("requests.post", lambda url, **kw: Respuesta())
+        with pytest.raises(RuntimeError):
+            email_mod.enviar_correo("a@b.com", "Asunto", "Cuerpo")
+
+
 class TestVerificacionCorreo:
     def test_registro_sin_correo_configurado_queda_activo(self, client):
         """Sin correo (aunque SMTP exista) la app funciona igual que antes."""
