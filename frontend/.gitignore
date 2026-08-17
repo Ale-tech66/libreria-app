@@ -4,3 +4,9 @@
 
 expo-env.d.ts
 # @end expo-cli
+# CNG: generado por expo prebuild (no se commitea)
+android/
+
+# APKs de build (artefactos)
+../LibreriaApp*.apk
+*.apk
