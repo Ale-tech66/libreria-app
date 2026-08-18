@@ -1,0 +1,53 @@
+name: Desktop - Instaladores
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'desktop/**'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - sistema: windows
+            runner: windows-latest
+            objetivo: '--win nsis'
+            artefacto: LibreriaApp-Windows
+          - sistema: mac
+            runner: macos-latest
+            objetivo: '--mac dmg --x64 --arm64'
+            artefacto: LibreriaApp-macOS
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Instalar dependencias
+        run: npm ci
+        working-directory: desktop
+
+      - name: Compilar renderer y electron
+        run: npm run build
+        working-directory: desktop
+
+      - name: Empaquetar instalador
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder ${{ matrix.objetivo }}
+        working-directory: desktop
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artefacto }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+          if-no-files-found: error
