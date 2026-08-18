@@ -69,16 +69,13 @@ jobs:
           merge-multiple: true
 
       - name: Publicar release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Librería App Escritorio ${{ github.ref_name }}
-          body: |
-            Instaladores de la versión de escritorio (Windows y macOS).
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la instaladores/
+          gh release create "$GITHUB_REF_NAME" instaladores/*.exe instaladores/*.dmg \
+            --title "Librería App Escritorio $GITHUB_REF_NAME" \
+            --notes "Instaladores de la versión de escritorio (Windows y macOS).
 
-            - **Windows**: archivo `.exe` (instalador NSIS).
-            - **macOS**: archivo `.dmg` (Intel y Apple Silicon).
-          files: |
-            instaladores/*.exe
-            instaladores/*.dmg
-          generate_release_notes: true
+            - **Windows**: archivo .exe (instalador NSIS).
+            - **macOS**: archivo .dmg (Intel y Apple Silicon)."
