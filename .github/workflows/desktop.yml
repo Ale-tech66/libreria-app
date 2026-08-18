@@ -71,6 +71,7 @@ jobs:
       - name: Publicar release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           ls -la instaladores/
           gh release create "$GITHUB_REF_NAME" instaladores/*.exe instaladores/*.dmg \
