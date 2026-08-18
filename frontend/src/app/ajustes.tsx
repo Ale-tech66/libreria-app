@@ -96,6 +96,7 @@ function TarjetaCuenta() {
   const { tema } = useTheme();
   const { user, refrescarUsuario } = useAuth();
   const [correo, setCorreo] = useState(user?.correo ?? '');
+  const [password, setPassword] = useState('');
   const [guardando, setGuardando] = useState(false);
 
   const handleGuardarCorreo = async () => {
@@ -103,9 +104,14 @@ function TarjetaCuenta() {
       Alert.alert('Aviso', 'Ingresa un correo válido');
       return;
     }
+    if (password.length < 6) {
+      Alert.alert('Aviso', 'Ingresa tu contraseña');
+      return;
+    }
     setGuardando(true);
     try {
-      await actualizarCorreo(correo.trim());
+      await actualizarCorreo(correo.trim(), password);
+      setPassword('');
       await refrescarUsuario();
       Alert.alert('Listo', 'Correo guardado. Lo usarás para recuperar tu contraseña.');
     } catch (e) {
@@ -137,6 +143,16 @@ function TarjetaCuenta() {
           keyboardType="email-address"
           value={correo}
           onChangeText={setCorreo}
+          style={{ marginTop: 8 }}
+        />
+        <ThemedInput
+          icono="lock-closed-outline"
+          label="Contraseña"
+          placeholder="Tu contraseña actual"
+          secureTextEntry
+          autoCapitalize="none"
+          value={password}
+          onChangeText={setPassword}
           style={{ marginTop: 8 }}
         />
         <ThemedButton

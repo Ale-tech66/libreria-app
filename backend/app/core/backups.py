@@ -42,15 +42,23 @@ def _serializar(valor: Any) -> Any:
     return valor
 
 
-def generar_backup(db: Session) -> bytes:
-    """Respaldo completo de la BD como JSON comprimido (gzip).
+def generar_backup(db: Session, organization_id: int | None = None) -> bytes:
+    """Respaldo de la BD como JSON comprimido (gzip).
 
-    Restaurable con restaurar_backup() o el script restore_backup.py.
+    Si `organization_id` se pasa, el respaldo incluye SOLO los datos de esa
+    organización (usuarios, productos, ventas, settings, auditoría...).
+    Sin el filtro se vuelca todo (uso exclusivo para operación del servidor).
     """
+    org_ids = [organization_id] if organization_id is not None else None
+
     tablas = Base.metadata.tables
     nombres = [
         n for n in ORDEN_TABLAS if n in tablas
     ] + [n for n in sorted(tablas) if n not in ORDEN_TABLAS]
+
+    # Índices de filas permitidas por tabla (respetando dependencias)
+    ids_ventas: list[int] = []
+    ids_usuarios: list[int] = []
 
     contenido: dict[str, Any] = {
         "app": "libreria-app",
@@ -59,10 +67,27 @@ def generar_backup(db: Session) -> bytes:
         "tablas": {},
     }
     for nombre in nombres:
-        filas = db.execute(select(tablas[nombre])).mappings().all()
+        tabla = tablas[nombre]
+        stmt = select(tabla)
+        if org_ids is not None:
+            if "organization_id" in tabla.c:
+                stmt = stmt.where(tabla.c.organization_id.in_(org_ids))
+            elif nombre == "ventas_detalles" and ids_ventas:
+                stmt = stmt.where(tabla.c.venta_id.in_(ids_ventas))
+            elif nombre == "refresh_tokens" and ids_usuarios:
+                stmt = stmt.where(tabla.c.user_id.in_(ids_usuarios))
+            elif nombre == "alembic_version":
+                pass  # metadatos del esquema, sin datos sensibles
+            elif nombre not in ("organizations", "users", "productos", "ventas", "ventas_detalles", "refresh_tokens", "settings", "audit_logs"):
+                stmt = stmt.where(text("1 = 0"))  # tabla desconocida: nada
+        filas = db.execute(stmt).mappings().all()
         contenido["tablas"][nombre] = [
             {k: _serializar(v) for k, v in fila.items()} for fila in filas
         ]
+        if nombre == "ventas":
+            ids_ventas = [f["id"] for f in contenido["tablas"][nombre]]
+        elif nombre == "users":
+            ids_usuarios = [f["id"] for f in contenido["tablas"][nombre]]
     return gzip.compress(json.dumps(contenido, ensure_ascii=False).encode("utf-8"))
 
 
@@ -199,7 +224,9 @@ def enviar_telegram(bot_token: str, chat_id: str, texto: str, documento: bytes |
         )
     datos = respuesta.json()
     if not datos.get("ok"):
-        raise RuntimeError(f"Telegram rechazó el envío: {datos.get('description', 'error desconocido')}")
+        raise RuntimeError(
+            f"Telegram rechazó el envío: {datos.get('description', 'error desconocido')}"
+        )
 
 
 async def _respaldar_todas_las_orgs() -> None:
@@ -217,7 +244,7 @@ async def _respaldar_todas_las_orgs() -> None:
                 if not bot_token or not chat_guardado:
                     continue
                 chat_id = chat_guardado.split(":", 1)[0]
-                contenido = generar_backup(db)
+                contenido = generar_backup(db, org_id)
                 nombre = f"respaldo-{datetime.utcnow():%Y%m%d-%H%M}.json.gz"
                 try:
                     enviar_telegram(

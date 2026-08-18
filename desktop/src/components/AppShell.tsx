@@ -10,7 +10,7 @@ import {
   ShoppingCart,
   Users,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { useAuth } from '../context/AuthContext';
 import { Auditoria } from '../screens/Auditoria';
@@ -18,7 +18,7 @@ import { Ajustes } from '../screens/Ajustes';
 import { Dashboard } from '../screens/Dashboard';
 import { Historial } from '../screens/Historial';
 import { Inventario } from '../screens/Inventario';
-import { PuntoVenta } from '../screens/PuntoVenta';
+import { onCarritoCambio, PuntoVenta } from '../screens/PuntoVenta';
 import { Reportes } from '../screens/Reportes';
 import { Usuarios } from '../screens/Usuarios';
 
@@ -46,6 +46,19 @@ export function AppShell() {
   const { sesion, cerrar } = useAuth();
   const esAdmin = sesion?.usuario.rol === 'admin';
   const [pantalla, setPantalla] = useState<Pantalla>('inicio');
+  const [itemsCarrito, setItemsCarrito] = useState(0);
+
+  useEffect(() => onCarritoCambio(setItemsCarrito), []);
+
+  const navegar = (id: Pantalla) => {
+    if (pantalla === 'ventas' && id !== 'ventas' && itemsCarrito > 0) {
+      const salir = window.confirm(
+        `Tienes ${itemsCarrito} producto(s) en el carrito sin cobrar. ¿Salir igualmente? Se perderá el carrito.`,
+      );
+      if (!salir) return;
+    }
+    setPantalla(id);
+  };
 
   const items = NAV.filter((n) => !n.soloAdmin || esAdmin);
 
@@ -72,7 +85,7 @@ export function AppShell() {
             <button
               key={id}
               className={`nav-item${pantalla === id ? ' activo' : ''}`}
-              onClick={() => setPantalla(id)}
+              onClick={() => navegar(id)}
             >
               <Icono size={17} />
               {etiqueta}
@@ -90,7 +103,7 @@ export function AppShell() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.22, ease: 'easeOut' }}
             >
-              {pantalla === 'inicio' && <Dashboard irA={(s) => setPantalla(s as Pantalla)} />}
+              {pantalla === 'inicio' && <Dashboard irA={(s) => navegar(s as Pantalla)} />}
               {pantalla === 'ventas' && <PuntoVenta />}
               {pantalla === 'inventario' && <Inventario />}
               {pantalla === 'historial' && esAdmin && <Historial />}

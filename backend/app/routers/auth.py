@@ -3,10 +3,11 @@ from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 import pyotp
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar
@@ -55,7 +56,7 @@ router = APIRouter(prefix="/auth", tags=["Autenticación"])
 # Suficiente para una sola instancia. Para múltiples instancias usar Redis.
 
 _MAX_ATTEMPTS = 5
-_WINDOW = timedelta(minutes=5)
+_WINDOW = timedelta(minutes=15)
 _lock = Lock()
 _failed: dict[str, list[datetime]] = defaultdict(list)
 
@@ -77,9 +78,76 @@ def _register_failure(username: str) -> None:
         _failed[username].append(datetime.now(timezone.utc))
 
 
+def _clear_failures(username: str) -> None:
+    with _lock:
+        _failed.pop(username, None)
+
+
+# Límite por IP (login, registro y envío de códigos): frena el password
+# spraying contra muchos usuarios y el abuso del envío de correos.
+_MAX_IP_ATTEMPTS = 25
+_ip_failed: dict[str, list[datetime]] = defaultdict(list)
+_ip_lock = Lock()
+
+
+def _ip(request: Request) -> str:
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "desconocida"
+
+
+def _check_ip_rate_limit(request: Request) -> None:
+    now = datetime.now(timezone.utc)
+    ip = _ip(request)
+    with _ip_lock:
+        attempts = [t for t in _ip_failed[ip] if now - t < _WINDOW]
+        _ip_failed[ip] = attempts
+        if len(attempts) >= _MAX_IP_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiadas solicitudes desde esta conexión. Intenta de nuevo más tarde.",
+            )
+
+
+def _register_ip_attempt(request: Request) -> None:
+    with _ip_lock:
+        _ip_failed[_ip(request)].append(datetime.now(timezone.utc))
+
+
+# Límite de intentos para códigos de 6 dígitos (verificación y recuperación):
+# sin esto, un código de 10^6 combinaciones sería forzable por fuerza bruta.
+_MAX_CODIGO_ATTEMPTS = 5
+_codigo_failed: dict[str, list[datetime]] = defaultdict(list)
+_codigo_lock = Lock()
+
+
+def _check_codigo_rate_limit(username: str) -> None:
+    now = datetime.now(timezone.utc)
+    with _codigo_lock:
+        attempts = [t for t in _codigo_failed[username] if now - t < _WINDOW]
+        _codigo_failed[username] = attempts
+        if len(attempts) >= _MAX_CODIGO_ATTEMPTS:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Demasiados intentos. Solicita un código nuevo más tarde.",
+            )
+
+
+def _register_codigo_attempt(username: str) -> None:
+    with _codigo_lock:
+        _codigo_failed[username].append(datetime.now(timezone.utc))
+
+
+def _clear_codigo_failures(username: str) -> None:
+    with _codigo_lock:
+        _codigo_failed.pop(username, None)
+
+
 @router.post("/register", response_model=RegistroOut)
 def register(
     user: UserCreate,
+    request: Request,
     db: Session = Depends(get_db),
     admin: User | None = Depends(get_current_user_optional),
 ):
@@ -92,25 +160,41 @@ def register(
     Si el correo está configurado en el servidor, la primera cuenta (la del
     dueño) se crea inactiva y recibe un código por correo para activarla.
     """
+    _check_ip_rate_limit(request)
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
 
+    # El bootstrap (primera organización) se serializa con un lock a nivel
+    # de base de datos para evitar que dos registros concurrentes creen
+    # organizaciones duplicadas y para que el "dueño" sea determinista.
     if db.query(User).count() == 0:
-        # Bootstrap: crea la organización y el primer admin
-        org = Organization(
-            nombre=user.nombre_negocio or f"Negocio de {user.username}",
-            tipo_negocio=user.tipo_negocio,
-            propietario=user.username,
-            correo=user.correo,
-            telefono=user.telefono,
-            pais=user.pais,
-        )
-        db.add(org)
-        db.flush()
-        rol = "admin"
-        organization_id = org.id
-        es_bootstrap = True
+        if db.bind.dialect.name == "postgresql":
+            db.execute(text("SELECT pg_advisory_xact_lock(7242026)"))
+        if db.query(User).count() != 0:
+            if admin is None or admin.rol != "admin":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo un administrador puede crear usuarios. Contacta a tu administrador.",
+                )
+            rol = user.rol
+            organization_id = admin.organization_id
+            es_bootstrap = False
+        else:
+            # Bootstrap: crea la organización y el primer admin
+            org = Organization(
+                nombre=user.nombre_negocio or f"Negocio de {user.username}",
+                tipo_negocio=user.tipo_negocio,
+                propietario=user.username,
+                correo=user.correo,
+                telefono=user.telefono,
+                pais=user.pais,
+            )
+            db.add(org)
+            db.flush()
+            rol = "admin"
+            organization_id = org.id
+            es_bootstrap = True
     else:
         if admin is None or admin.rol != "admin":
             raise HTTPException(
@@ -175,9 +259,10 @@ def verificar_codigo(
     db: Session = Depends(get_db),
 ):
     """Activa la cuenta con el código recibido por correo."""
+    _check_codigo_rate_limit(datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+        raise HTTPException(status_code=404, detail="No se pudo verificar la cuenta")
     if not user.codigo_verificacion:
         raise HTTPException(
             status_code=400,
@@ -189,8 +274,10 @@ def verificar_codigo(
             detail="El código expiró. Solicita uno nuevo.",
         )
     if not codigo_correcto(user.codigo_verificacion, datos.code):
+        _register_codigo_attempt(datos.username)
         raise HTTPException(status_code=401, detail="Código incorrecto")
 
+    _clear_codigo_failures(datos.username)
     user.activo = True
     user.codigo_verificacion = None
     user.codigo_expira = None
@@ -211,18 +298,17 @@ def verificar_codigo(
 @router.post("/reenviar-codigo")
 def reenviar_codigo(
     datos: ReenviarCodigoRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
     """Regenera y reenvía el código de verificación."""
+    _check_ip_rate_limit(request)
+    _check_codigo_rate_limit(datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if user.activo:
-        raise HTTPException(status_code=400, detail="La cuenta ya está activa")
-    if not user.correo:
+    if not user or user.activo or not user.correo:
         raise HTTPException(
             status_code=400,
-            detail="El usuario no tiene correo registrado",
+            detail="No se pudo reenviar el código en este momento",
         )
     try:
         hash_codigo, vigencia = enviar_codigo(
@@ -230,8 +316,12 @@ def reenviar_codigo(
             "Nuevo código de verificación",
             f"Hola {user.username}, aquí tienes un código nuevo:",
         )
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
+    except RuntimeError:
+        raise HTTPException(
+            status_code=503,
+            detail="No se pudo enviar el correo en este momento. Intenta más tarde.",
+        ) from None
+    _register_codigo_attempt(datos.username)
     user.codigo_verificacion = hash_codigo
     user.codigo_expira = datetime.utcnow() + vigencia
     db.commit()
@@ -240,6 +330,7 @@ def reenviar_codigo(
 
 class CorreoUpdateRequest(BaseModel):
     correo: str = Field(min_length=3, max_length=200)
+    password: str = Field(min_length=6, max_length=72)
 
 
 @router.put("/correo")
@@ -248,9 +339,15 @@ def actualizar_correo(
     db: Session = Depends(get_db),
     usuario: User = Depends(get_current_user),
 ):
-    """Guarda el correo del usuario (para verificación y recuperación)."""
+    """Guarda el correo del usuario (para verificación y recuperación).
+
+    Requiere la contraseña actual: un token robado no debe poder secuestrar
+    el correo de recuperación.
+    """
     if "@" not in datos.correo:
         raise HTTPException(status_code=400, detail="El correo no es válido")
+    if not verify_password(datos.password, usuario.hashed_password):
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
     usuario.correo = datos.correo.strip()
     db.commit()
     return {"ok": True, "correo": usuario.correo}
@@ -259,28 +356,32 @@ def actualizar_correo(
 @router.post("/recuperar")
 def recuperar(
     datos: RecuperarRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Envía un código por correo para restablecer la contraseña."""
+    """Envía un código por correo para restablecer la contraseña.
+
+    La respuesta es idéntica exista o no el usuario (evita enumerar cuentas).
+    """
+    _check_ip_rate_limit(request)
+    _check_codigo_rate_limit(datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not user.correo:
-        raise HTTPException(
-            status_code=400,
-            detail="El usuario no tiene correo registrado. Contacta a tu administrador.",
-        )
-    try:
-        hash_codigo, vigencia = enviar_codigo(
-            user.correo,
-            "Recupera tu contraseña de Librería App",
-            f"Hola {user.username}, usa este código para restablecer tu contraseña:",
-        )
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e)) from e
-    user.codigo_verificacion = hash_codigo
-    user.codigo_expira = datetime.utcnow() + vigencia
-    db.commit()
+    if user and user.correo:
+        try:
+            hash_codigo, vigencia = enviar_codigo(
+                user.correo,
+                "Recupera tu contraseña de Librería App",
+                f"Hola {user.username}, usa este código para restablecer tu contraseña:",
+            )
+        except RuntimeError:
+            raise HTTPException(
+                status_code=503,
+                detail="No se pudo enviar el correo en este momento. Intenta más tarde.",
+            ) from None
+        _register_codigo_attempt(datos.username)
+        user.codigo_verificacion = hash_codigo
+        user.codigo_expira = datetime.utcnow() + vigencia
+        db.commit()
     return {"ok": True}
 
 
@@ -290,10 +391,9 @@ def recuperar_confirmar(
     db: Session = Depends(get_db),
 ):
     """Valida el código y cambia la contraseña."""
+    _check_codigo_rate_limit(datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    if not user.codigo_verificacion:
+    if not user or not user.codigo_verificacion:
         raise HTTPException(
             status_code=400,
             detail="No hay un código pendiente. Solicita uno nuevo.",
@@ -304,8 +404,10 @@ def recuperar_confirmar(
             detail="El código expiró. Solicita uno nuevo.",
         )
     if not codigo_correcto(user.codigo_verificacion, datos.code):
+        _register_codigo_attempt(datos.username)
         raise HTTPException(status_code=401, detail="Código incorrecto")
 
+    _clear_codigo_failures(datos.username)
     user.hashed_password = get_password_hash(datos.nueva_password)
     user.codigo_verificacion = None
     user.codigo_expira = None
@@ -325,14 +427,17 @@ def recuperar_confirmar(
 
 @router.post("/login", response_model=LoginResponse)
 def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
     _check_rate_limit(form_data.username)
+    _check_ip_rate_limit(request)
 
     user = db.query(User).filter(User.username == form_data.username).first()
     if not user or not verify_password(form_data.password, user.hashed_password):
         _register_failure(form_data.username)
+        _register_ip_attempt(request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario o contraseña incorrectos",
@@ -341,12 +446,9 @@ def login(
     if not user.activo:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Verifica tu correo antes de iniciar sesión"
-                if user.codigo_verificacion
-                else "Usuario desactivado. Contacta a tu administrador."
-            ),
+            detail="Tu cuenta no puede iniciar sesión. Verifica tu correo o contacta a tu administrador.",
         )
+    _clear_failures(form_data.username)
 
     # Si el usuario tiene MFA activado, primero hay que validar el código
     if user.mfa_secret:
@@ -429,8 +531,11 @@ def mfa_verify_setup(
     """Confirma que el usuario escaneó el QR probando su código TOTP.
 
     El secreto viaja desde el dispositivo (lo generó /mfa/setup) y recién
-    aquí, con un código válido, se guarda en la BD.
+    aquí, con un código válido, se guarda en la BD. Se exige la contraseña
+    actual para que un token robado no pueda activar MFA y bloquear al dueño.
     """
+    if not verify_password(datos.password, usuario.hashed_password):
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
     _check_mfa_rate_limit(usuario.id)
     if not pyotp.TOTP(datos.secret).verify(datos.code, valid_window=1):
         _register_mfa_failure(usuario.id)
@@ -555,7 +660,19 @@ def refresh(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
         .filter(RefreshToken.token_hash == token_hash)
         .first()
     )
-    if not stored or stored.revoked:
+    if not stored:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión inválida o ya utilizada",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if stored.revoked:
+        # Reuso de un token ya usado: posible robo. Se revoca TODA la
+        # familia de sesiones del usuario (y él vuelve a iniciar sesión).
+        db.query(RefreshToken).filter(RefreshToken.user_id == stored.user_id).update(
+            {"revoked": True}
+        )
+        db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesión inválida o ya utilizada",
@@ -585,7 +702,7 @@ def refresh(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
 
 @router.post("/logout")
 def logout(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
-    """Revoca el refresh token: la sesión queda invalidada."""
+    """Cierra la sesión: revoca TODOS los refresh tokens del usuario."""
     token_hash = hash_refresh_token(refresh_request.refresh_token)
     stored = (
         db.query(RefreshToken)
@@ -593,7 +710,9 @@ def logout(refresh_request: RefreshRequest, db: Session = Depends(get_db)):
         .first()
     )
     if stored:
-        stored.revoked = True
+        db.query(RefreshToken).filter(RefreshToken.user_id == stored.user_id).update(
+            {"revoked": True}
+        )
         db.commit()
     return {"ok": True}
 
@@ -642,6 +761,31 @@ def actualizar_usuario(
     if usuario.id == admin.id and update.activo is False:
         raise HTTPException(
             status_code=400, detail="No puedes desactivar tu propia cuenta"
+        )
+
+    # Protección jerárquica: el administrador principal (el primer usuario
+    # de la empresa) solo puede ser modificado por sí mismo, y solo él puede
+    # modificar a otros administradores.
+    owner_id = (
+        db.query(func.min(User.id)).filter(User.organization_id == admin.organization_id).scalar()
+    )
+    if usuario.id == owner_id and admin.id != owner_id:
+        raise HTTPException(
+            status_code=403,
+            detail="No puedes modificar al administrador principal",
+        )
+    if (
+        usuario.id != admin.id
+        and usuario.rol == "admin"
+        and admin.id != owner_id
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Solo el administrador principal puede modificar a otros administradores",
+        )
+    if usuario.id == admin.id and update.rol is not None and update.rol != "admin":
+        raise HTTPException(
+            status_code=400, detail="No puedes cambiar tu propio rol de administrador"
         )
 
     if update.rol is not None:

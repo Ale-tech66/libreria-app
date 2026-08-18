@@ -1,5 +1,5 @@
 import { BookOpen, KeyRound, Receipt, ShieldAlert, UserRound } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getAuditoria } from '../api/auditoria';
 import type { AuditLogOut } from '../api/types';
@@ -27,21 +27,27 @@ export function Auditoria() {
   const [cargando, setCargando] = useState(true);
   const [cargandoMas, setCargandoMas] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const secuenciaRef = useRef(0);
 
   const cargar = useCallback(async (pag: number, rec: string) => {
+    const sec = ++secuenciaRef.current;
     if (pag === 1) setCargando(true);
     else setCargandoMas(true);
     setError(null);
     try {
       const datos = await getAuditoria({ page: pag, page_size: POR_PAGINA, recurso: rec || undefined });
+      if (sec !== secuenciaRef.current) return;
       setRegistros((prev) => (pag === 1 ? datos.items : [...prev, ...datos.items]));
       setTotal(datos.total);
       setPagina(pag);
     } catch (err) {
+      if (sec !== secuenciaRef.current) return;
       setError(err instanceof Error ? err.message : 'No se pudo cargar la auditoría');
     } finally {
-      setCargando(false);
-      setCargandoMas(false);
+      if (sec === secuenciaRef.current) {
+        setCargando(false);
+        setCargandoMas(false);
+      }
     }
   }, []);
 

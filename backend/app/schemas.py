@@ -85,6 +85,7 @@ class MfaVerifyRequest(BaseModel):
     """Verificación del QR: el secreto se confirma y recién ahí se guarda."""
     secret: str = Field(min_length=16, max_length=64)
     code: str = Field(min_length=6, max_length=6)
+    password: str = Field(min_length=6, max_length=72)
 
 
 class MfaSetupOut(BaseModel):
@@ -147,13 +148,13 @@ class ProductoOut(ProductoBase):
 
 class VentaDetalleCreate(BaseModel):
     producto_id: int
-    cantidad: int = Field(gt=0)
+    cantidad: int = Field(gt=0, le=9999)
     # Nota: el precio SIEMPRE lo define el servidor, este campo se ignora.
 
 
 class VentaCreate(BaseModel):
     metodo_pago: METODOS_PAGO = "efectivo"
-    detalles: List[VentaDetalleCreate] = Field(min_length=1)
+    detalles: List[VentaDetalleCreate] = Field(min_length=1, max_length=200)
 
 
 class VentaPendienteSync(BaseModel):
@@ -161,11 +162,11 @@ class VentaPendienteSync(BaseModel):
     id_local: str = Field(min_length=1, max_length=100)
     fecha: datetime
     metodo_pago: METODOS_PAGO = "efectivo"
-    detalles: List[VentaDetalleCreate] = Field(min_length=1)
+    detalles: List[VentaDetalleCreate] = Field(min_length=1, max_length=200)
 
 
 class SyncVentasRequest(BaseModel):
-    ventas: List[VentaPendienteSync] = Field(min_length=1)
+    ventas: List[VentaPendienteSync] = Field(min_length=1, max_length=200)
 
 
 class ResultadoSyncVenta(BaseModel):

@@ -55,13 +55,13 @@ export function setAlSinSesion(cb: () => void): void {
   alSinSesion = cb;
 }
 
-let refrescando: Promise<boolean> | null = null;
+let refrescando: Promise<'ok' | 'red' | 'invalido'> | null = null;
 
-async function renovarToken(): Promise<boolean> {
+export async function renovarToken(): Promise<'ok' | 'red' | 'invalido'> {
   if (!refrescando) {
     refrescando = (async () => {
       const refreshToken = getRefreshToken();
-      if (!refreshToken) return false;
+      if (!refreshToken) return 'invalido';
       try {
         const respuesta = await fetch(`${API_URL}/auth/refresh`, {
           method: 'POST',
@@ -69,11 +69,12 @@ async function renovarToken(): Promise<boolean> {
           body: JSON.stringify({ refresh_token: refreshToken }),
         });
         const datos = (await respuesta.json()) as { access_token?: string; refresh_token?: string };
-        if (!respuesta.ok || !datos.access_token) return false;
+        if (!respuesta.ok || !datos.access_token) return 'invalido';
         guardarTokens(datos.access_token, datos.refresh_token ?? refreshToken);
-        return true;
+        return 'ok';
       } catch {
-        return false;
+        // Error de red: la sesión sigue siendo válida, no hay que desloguear
+        return 'red';
       } finally {
         refrescando = null;
       }
@@ -82,8 +83,11 @@ async function renovarToken(): Promise<boolean> {
   return refrescando;
 }
 
+const TIEMPO_ESPERA_MS = 45_000;
+
 interface Opciones extends RequestInit {
   auth?: boolean;
+  blob?: boolean;
 }
 
 export async function pedir<T>(ruta: string, opciones: Opciones = {}, reintento = true): Promise<T> {
@@ -96,7 +100,26 @@ export async function pedir<T>(ruta: string, opciones: Opciones = {}, reintento 
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const respuesta = await fetch(`${API_URL}${ruta}`, { ...opciones, headers });
+  const control = new AbortController();
+  const timer = setTimeout(() => control.abort(), TIEMPO_ESPERA_MS);
+  let respuesta: Response;
+  try {
+    respuesta = await fetch(`${API_URL}${ruta}`, {
+      ...opciones,
+      headers,
+      signal: control.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === 'AbortError') {
+      throw new ApiError(0, 'El servidor tardó demasiado en responder. Intenta de nuevo.');
+    }
+    throw new ApiError(0, 'No hay conexión con el servidor. Revisa tu internet.');
+  } finally {
+    clearTimeout(timer);
+  }
+  if (respuesta.ok && opciones.blob) {
+    return (await respuesta.blob()) as unknown as T;
+  }
   const texto = await respuesta.text();
   let datos: unknown = null;
   try {
@@ -106,12 +129,17 @@ export async function pedir<T>(ruta: string, opciones: Opciones = {}, reintento 
   }
 
   if (respuesta.status === 401 && opciones.auth !== false && reintento) {
-    if (await renovarToken()) {
+    const resultado = await renovarToken();
+    if (resultado === 'ok') {
       return pedir<T>(ruta, opciones, false);
     }
-    limpiarSesionLocal();
-    alSinSesion?.();
-    throw new ApiError(401, 'Tu sesión venció. Inicia sesión de nuevo.');
+    if (resultado === 'invalido') {
+      limpiarSesionLocal();
+      alSinSesion?.();
+      throw new ApiError(401, 'Tu sesión venció. Inicia sesión de nuevo.');
+    }
+    // Error de red durante la renovación: la sesión sigue siendo válida
+    throw new ApiError(0, 'No hay conexión con el servidor. Revisa tu internet.');
   }
 
   if (!respuesta.ok) {

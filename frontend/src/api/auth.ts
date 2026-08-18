@@ -42,9 +42,13 @@ export async function mfaSetup(): Promise<MfaSetupResult> {
   }
 }
 
-export async function mfaVerifySetup(secret: string, code: string): Promise<void> {
+export async function mfaVerifySetup(
+  secret: string,
+  code: string,
+  password: string
+): Promise<void> {
   try {
-    await api.post('/auth/mfa/verify-setup', { secret, code });
+    await api.post('/auth/mfa/verify-setup', { secret, code, password });
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Código incorrecto'));
   }
@@ -145,9 +149,9 @@ export async function recuperarConfirmar(
   }
 }
 
-export async function actualizarCorreo(correo: string): Promise<void> {
+export async function actualizarCorreo(correo: string, password: string): Promise<void> {
   try {
-    await api.put('/auth/correo', { correo });
+    await api.put('/auth/correo', { correo, password });
   } catch (error) {
     throw new Error(getErrorMessage(error, 'Error al guardar el correo'));
   }

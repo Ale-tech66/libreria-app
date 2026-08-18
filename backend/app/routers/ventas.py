@@ -1,5 +1,6 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func
@@ -31,6 +32,35 @@ router = APIRouter(
     dependencies=[Depends(require_role("admin", "ventas"))],
 )
 
+# Deduplicación de ventas offline (en memoria): si el dispositivo reintenta
+# con el mismo id_local (timeout, red), no se registra la venta dos veces.
+# El diccionario se limpia perezosamente (ventanas de 1 hora).
+_IDS_SINCRONIZADOS: dict[tuple[int, str], tuple[int, float]] = {}
+_ID_SYNC_TTL_SEGUNDOS = 3600
+
+
+def _es_id_local_nuevo(organization_id: int, id_local: str) -> bool:
+    clave = (organization_id, id_local)
+    ahora = time.time()
+    viejo = _IDS_SINCRONIZADOS.get(clave)
+    if viejo and ahora - viejo[1] < _ID_SYNC_TTL_SEGUNDOS:
+        return False
+    _IDS_SINCRONIZADOS[clave] = (viejo[0] if viejo else 0, ahora)
+    return True
+
+
+def _fecha_sync_valida(fecha: datetime | None) -> datetime | None:
+    """Acepta solo fechas creíbles (no en el futuro ni en el pasado lejano)."""
+    if fecha is None:
+        return None
+    # El cliente envía la fecha local sin zona horaria: se compara en UTC naive
+    ahora = datetime.now(timezone.utc).replace(tzinfo=None)
+    if fecha > ahora + timedelta(minutes=5):
+        raise HTTPException(status_code=400, detail="La fecha de la venta es inválida (futuro)")
+    if fecha < ahora - timedelta(days=30):
+        raise HTTPException(status_code=400, detail="La fecha de la venta es inválida (pasado lejano)")
+    return fecha
+
 
 def _venta_out(venta: Venta) -> dict:
     """Serializa una venta con sus detalles y el nombre del producto."""
@@ -59,7 +89,11 @@ def _crear_venta_db(
     metodo_pago: str,
     fecha=None,
 ) -> Venta:
-    """Valida productos, descuenta stock y crea la venta (precio del servidor)."""
+    """Valida productos, descuenta stock y crea la venta (precio del servidor).
+
+    La venta, el descuento de stock y el log de auditoría se cometen en UNA
+    sola transacción: si algo falla, no queda ninguna venta a medias.
+    """
     total_venta = Decimal("0.00")
     detalles_db: list[VentaDetalle] = []
 
@@ -103,21 +137,33 @@ def _crear_venta_db(
             )
         )
 
+    nueva_venta = Venta(
+        total=total_venta,
+        metodo_pago=metodo_pago,
+        organization_id=usuario.organization_id,
+        usuario_id=usuario.id,
+        fecha=fecha,
+    )
+    db.add(nueva_venta)
     try:
-        nueva_venta = Venta(
-            total=total_venta,
-            metodo_pago=metodo_pago,
-            organization_id=usuario.organization_id,
-            usuario_id=usuario.id,
-            fecha=fecha,
-        )
-        db.add(nueva_venta)
         db.flush()  # Obtiene el ID de la venta
 
         for detalle in detalles_db:
             detalle.venta_id = nueva_venta.id
             db.add(detalle)
 
+        registrar(
+            db,
+            accion="vender",
+            recurso="venta",
+            recurso_id=nueva_venta.id,
+            detalle=f"Venta por {total_venta} ({metodo_pago})"
+            + (" [sincronizada offline]" if fecha else ""),
+            usuario_id=usuario.id,
+            username=usuario.username,
+            organization_id=usuario.organization_id,
+            commit=False,
+        )
         db.commit()
     except Exception:
         db.rollback()
@@ -129,17 +175,6 @@ def _crear_venta_db(
         .options(selectinload(Venta.detalles).selectinload(VentaDetalle.producto))
         .filter(Venta.id == nueva_venta.id)
         .first()
-    )
-    registrar(
-        db,
-        accion="vender",
-        recurso="venta",
-        recurso_id=nueva_venta.id,
-        detalle=f"Venta por {total_venta} ({metodo_pago})"
-        + (" [sincronizada offline]" if fecha else ""),
-        usuario_id=usuario.id,
-        username=usuario.username,
-        organization_id=usuario.organization_id,
     )
     return nueva_venta
 
@@ -168,14 +203,27 @@ def sincronizar_ventas_offline(
     """
     resultados = []
     for pendiente in datos.ventas:
+        clave = (usuario.organization_id, pendiente.id_local)
+        duplicado = _IDS_SINCRONIZADOS.get(clave)
+        if duplicado and time.time() - duplicado[1] < _ID_SYNC_TTL_SEGUNDOS:
+            resultados.append(
+                {
+                    "id_local": pendiente.id_local,
+                    "id_servidor": duplicado[0],
+                    "total": None,
+                    "error": None,
+                }
+            )
+            continue
         try:
             venta = _crear_venta_db(
                 db,
                 usuario,
                 pendiente.detalles,
                 pendiente.metodo_pago,
-                fecha=pendiente.fecha,
+                fecha=_fecha_sync_valida(pendiente.fecha),
             )
+            _IDS_SINCRONIZADOS[clave] = (venta.id, time.time())
             resultados.append(
                 {
                     "id_local": pendiente.id_local,

@@ -26,9 +26,18 @@ export function ProductoFormModal({ abierto, producto, codigoInicial, onCerrar, 
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputArchivoRef = useRef<HTMLInputElement>(null);
+  const fotoUrlRef = useRef<string | null>(null);
+
+  const revocarFoto = () => {
+    if (fotoUrlRef.current) {
+      URL.revokeObjectURL(fotoUrlRef.current);
+      fotoUrlRef.current = null;
+    }
+  };
 
   useEffect(() => {
     if (!abierto) return;
+    revocarFoto();
     setError(null);
     setFoto(null);
     setArchivo(null);
@@ -58,8 +67,11 @@ export function ProductoFormModal({ abierto, producto, codigoInicial, onCerrar, 
   const alElegirArchivo = (e: React.ChangeEvent<HTMLInputElement>) => {
     const arch = e.target.files?.[0];
     if (!arch) return;
+    revocarFoto();
+    const url = URL.createObjectURL(arch);
+    fotoUrlRef.current = url;
     setArchivo(arch);
-    setFoto(URL.createObjectURL(arch));
+    setFoto(url);
   };
 
   const guardar = async () => {
@@ -92,6 +104,13 @@ export function ProductoFormModal({ abierto, producto, codigoInicial, onCerrar, 
       setCargando(false);
     }
   };
+
+  useEffect(
+    () => () => {
+      revocarFoto();
+    },
+    [],
+  );
 
   return (
     <Modal

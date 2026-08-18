@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
-import { cerrarSesionApi, me, refresh } from '../api/auth';
-import { limpiarSesionLocal, setAlSinSesion } from '../api/client';
+import { cerrarSesionApi, me } from '../api/auth';
+import { limpiarSesionLocal, renovarToken, setAlSinSesion } from '../api/client';
 import type { Token, UserOut } from '../api/types';
 
 interface Sesion {
@@ -64,15 +64,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [sesion]);
 
   const renovar = useCallback(async () => {
-    if (!sesion) return;
+    // Usa el mismo renovador del cliente API (single-flight): nunca hay dos
+    // refrescos en paralelo con el mismo token, y un error de red no borra
+    // la sesión. Los tokens nuevos quedan en localStorage (guardarTokens).
+    const resultado = await renovarToken();
+    if (resultado !== 'ok') return;
     try {
-      const tokens = await refresh(sesion.refresh_token);
-      const usuario = await me(tokens.access_token);
-      setSesion({ access_token: tokens.access_token, refresh_token: tokens.refresh_token, usuario });
+      const cruda = localStorage.getItem(CLAVE_SESION);
+      if (!cruda) return;
+      const guardada = JSON.parse(cruda) as { access_token: string; refresh_token: string };
+      const usuario = await me(guardada.access_token);
+      setSesion({ ...guardada, usuario });
     } catch {
-      setSesion(null);
+      /* el próximo 401 lo maneja el cliente */
     }
-  }, [sesion]);
+  }, []);
 
   useEffect(() => {
     const intervalo = setInterval(() => void renovar(), 25 * 60 * 1000);

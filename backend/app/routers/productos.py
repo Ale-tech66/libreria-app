@@ -21,6 +21,18 @@ router = APIRouter(
 
 TIPOS_PERMITIDOS = {"image/jpeg", "image/png", "image/webp"}
 MAX_FOTO_BYTES = 5 * 1024 * 1024  # 5 MB
+_CHUNK = 64 * 1024
+
+
+def _detectar_tipo(contenido: bytes) -> str | None:
+    """Detecta el tipo real de imagen por sus bytes (no confía en el header)."""
+    if contenido.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if contenido.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(contenido) >= 12 and contenido[:4] == b"RIFF" and contenido[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def _r2_cliente():
@@ -83,7 +95,7 @@ def _cloudinary_subir(contenido: bytes, content_type: str) -> str:
     if respuesta.status_code >= 400:
         raise HTTPException(
             status_code=502,
-            detail=f"No se pudo subir la foto a Cloudinary: {respuesta.text[:200]}",
+            detail="No se pudo subir la foto. Intenta de nuevo en unos minutos.",
         )
     return respuesta.json()["secure_url"]
 
@@ -117,25 +129,32 @@ def _cloudinary_borrar(url: str) -> None:
 
 
 def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
-    if archivo.content_type not in TIPOS_PERMITIDOS:
-        raise HTTPException(
-            status_code=400,
-            detail="Solo se permiten imágenes JPG, PNG o WebP",
-        )
-
-    contenido = archivo.file.read()
+    # Lee en trozos para abortar antes de cargar en memoria archivos gigantes
+    contenido = b""
+    while len(contenido) <= MAX_FOTO_BYTES:
+        trozo = archivo.file.read(_CHUNK)
+        if not trozo:
+            break
+        contenido += trozo
     if len(contenido) > MAX_FOTO_BYTES:
         raise HTTPException(status_code=400, detail="La imagen supera los 5 MB")
+
+    tipo_real = _detectar_tipo(contenido)
+    if not tipo_real:
+        raise HTTPException(
+            status_code=400,
+            detail="El archivo no es una imagen válida (JPG, PNG o WebP)",
+        )
 
     extension = {
         "image/jpeg": ".jpg",
         "image/png": ".png",
         "image/webp": ".webp",
-    }[archivo.content_type]
+    }[tipo_real]
 
     if _cloudinary_activo():
         # Cloudinary: la foto vive en la nube y devolvemos su URL pública
-        return _cloudinary_subir(contenido, archivo.content_type)
+        return _cloudinary_subir(contenido, tipo_real)
 
     if _r2_activo():
         # Object storage: la foto vive en R2 y devolvemos su URL pública
@@ -144,7 +163,7 @@ def _guardar_foto(producto_id: int, archivo: UploadFile) -> str:
             Bucket=settings.R2_BUCKET,
             Key=clave,
             Body=contenido,
-            ContentType=archivo.content_type,
+            ContentType=tipo_real,
         )
         base = settings.R2_PUBLIC_URL.rstrip("/") if settings.R2_PUBLIC_URL else ""
         return f"{base}/{clave}" if base else clave

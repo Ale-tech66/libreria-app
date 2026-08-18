@@ -29,8 +29,8 @@ export const mfaConfirmar = (mfaToken: string, code: string) =>
 
 export const mfaSetup = () => pedir<MfaSetupOut>('/auth/mfa/setup', { method: 'POST' });
 
-export const mfaVerifySetup = (secret: string, code: string) =>
-  pedir<{ ok: boolean }>('/auth/mfa/verify-setup', { method: 'POST', body: JSON.stringify({ secret, code }) });
+export const mfaVerifySetup = (secret: string, code: string, password: string) =>
+  pedir<{ ok: boolean }>('/auth/mfa/verify-setup', { method: 'POST', body: JSON.stringify({ secret, code, password }) });
 
 export const mfaDisable = (code: string) =>
   pedir<{ ok: boolean }>('/auth/mfa/disable', { method: 'POST', body: JSON.stringify({ code }) });
@@ -69,8 +69,8 @@ export const me = (accessToken: string) =>
 export const cerrarSesionApi = (refreshToken: string) =>
   pedir<{ ok: boolean }>('/auth/logout', { method: 'POST', body: JSON.stringify({ refresh_token: refreshToken }) });
 
-export const actualizarCorreo = (correo: string) =>
-  pedir<UserOut>('/auth/correo', { method: 'PUT', body: JSON.stringify({ correo }) });
+export const actualizarCorreo = (correo: string, password: string) =>
+  pedir<UserOut>('/auth/correo', { method: 'PUT', body: JSON.stringify({ correo, password }) });
 
 export const getUsuarios = () => pedir<UserOut[]>('/auth/users');
 

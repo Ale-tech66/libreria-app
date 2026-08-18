@@ -161,6 +161,7 @@ function ModalNuevoUsuario({
   }, [abierto]);
 
   const guardar = async () => {
+    if (cargando) return;
     if (!username.trim() || password.length < 6) {
       setError('Usuario obligatorio y contraseña de al menos 6 caracteres.');
       return;

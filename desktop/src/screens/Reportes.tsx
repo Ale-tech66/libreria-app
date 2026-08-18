@@ -56,7 +56,8 @@ export function Reportes() {
   if (!reporte) return <Vacio mensaje="Sin datos de reporte." />;
 
   const maxDia = Math.max(1, ...reporte.por_dia.map((d) => d.total));
-  const hoy = new Date().toISOString().slice(0, 10);
+  const ahora = new Date();
+  const hoy = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-${String(ahora.getDate()).padStart(2, '0')}`;
 
   return (
     <div className="tarjeta">

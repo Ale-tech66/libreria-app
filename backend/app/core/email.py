@@ -60,7 +60,10 @@ def generar_codigo() -> str:
 
 
 def hash_codigo(codigo: str) -> str:
-    return hashlib.sha256(codigo.encode()).hexdigest()
+    """HMAC con la clave secreta: sin la clave no se puede forzar el hash."""
+    return hmac.new(
+        settings.SECRET_KEY.encode(), codigo.encode(), hashlib.sha256
+    ).hexdigest()
 
 
 def codigo_correcto(guardado: str | None, codigo: str) -> bool:
@@ -136,7 +139,7 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> None:
         except smtplib.SMTPException:
             # Error de protocolo o credenciales: no tiene sentido probar otro puerto
             raise
-    raise RuntimeError(f"No se pudo enviar el correo: {ultimo_error}")
+    raise RuntimeError("No se pudo enviar el correo en este momento")
 
 
 def enviar_codigo(destinatario: str, asunto: str, cuerpo_antes_codigo: str) -> str:

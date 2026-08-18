@@ -41,10 +41,17 @@ export function Historial() {
 
   useEffect(() => {
     if (reciboId === null) return;
-    getRecibo(reciboId)
-      .then(setRecibo)
+    // Último recibo solicitado gana: un clic rápido en dos recibos no deja
+    // que la respuesta del primero pise al segundo.
+    const pedido = reciboId;
+    getRecibo(pedido)
+      .then((datos) => {
+        if (reciboId === pedido) setRecibo(datos);
+      })
       .catch((err) => window.alert(err instanceof Error ? err.message : 'No se pudo cargar el recibo'))
-      .finally(() => setReciboId(null));
+      .finally(() => {
+        if (reciboId === pedido) setReciboId(null);
+      });
   }, [reciboId]);
 
   const hayMas = pagina * POR_PAGINA < total;

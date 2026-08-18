@@ -125,7 +125,7 @@ class TestMfa:
         verify = client.post(
             "/auth/mfa/verify-setup",
             headers=auth(admin_token),
-            json={"secret": data["secret"], "code": totp.now()},
+            json={"secret": data["secret"], "code": totp.now(), "password": "admin123"},
         )
         assert verify.status_code == 200
         return totp
@@ -219,7 +219,7 @@ class TestMfa:
         response = client.post(
             "/auth/mfa/verify-setup",
             headers=auth(admin_token),
-            json={"secret": data["secret"], "code": totp.now()},
+            json={"secret": data["secret"], "code": totp.now(), "password": "admin123"},
         )
         assert response.status_code == 200
         assert response.json()["ok"] is True
@@ -236,7 +236,7 @@ class TestMfa:
         verify = client.post(
             "/auth/mfa/verify-setup",
             headers=auth(admin_token),
-            json={"secret": data["secret"], "code": codigo_mal},
+            json={"secret": data["secret"], "code": codigo_mal, "password": "admin123"},
         )
         assert verify.status_code == 401
 
@@ -261,7 +261,7 @@ class TestMfa:
         client.post(
             "/auth/mfa/verify-setup",
             headers=auth(admin_token),
-            json={"secret": setup["secret"], "code": totp.now()},
+            json={"secret": setup["secret"], "code": totp.now(), "password": "admin123"},
         )
         login_despues = client.post(
             "/auth/login", data={"username": "admin", "password": "admin123"}

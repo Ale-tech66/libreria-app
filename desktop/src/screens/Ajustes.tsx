@@ -9,7 +9,7 @@ import {
   ShieldCheck,
   ShieldOff,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { configurarTelegram, descargarRespaldo, getEstadoTelegram, probarTelegram } from '../api/backups';
 import { actualizarCorreo, mfaDisable, mfaSetup, mfaVerifySetup } from '../api/auth';
@@ -33,8 +33,10 @@ export function Ajustes() {
   const [telegram, setTelegram] = useState<TelegramEstado | null>(null);
   const [token, setToken] = useState('');
   const [cargandoTelegram, setCargandoTelegram] = useState(true);
+  const [errorTelegram, setErrorTelegram] = useState<string | null>(null);
   const [mensajeTelegram, setMensajeTelegram] = useState<string | null>(null);
   const [descargando, setDescargando] = useState(false);
+  const [passwordCorreo, setPasswordCorreo] = useState('');
 
   useEffect(() => {
     setCorreo(sesion?.usuario.correo ?? '');
@@ -43,10 +45,12 @@ export function Ajustes() {
   const cargarTelegram = useCallback(async () => {
     if (!esAdmin) return;
     setCargandoTelegram(true);
+    setErrorTelegram(null);
     try {
       setTelegram(await getEstadoTelegram());
     } catch {
       setTelegram(null);
+      setErrorTelegram('No se pudo consultar el estado del bot de Telegram.');
     } finally {
       setCargandoTelegram(false);
     }
@@ -57,12 +61,17 @@ export function Ajustes() {
   }, [cargarTelegram]);
 
   const guardarCorreo = async () => {
-    if (!correo.trim()) return;
+    if (guardandoCorreo) return;
+    if (!correo.trim() || !passwordCorreo) {
+      setError('Correo y contraseña son obligatorios.');
+      return;
+    }
     setGuardandoCorreo(true);
     setMensaje(null);
     setError(null);
     try {
-      await actualizarCorreo(correo.trim());
+      await actualizarCorreo(correo.trim(), passwordCorreo);
+      setPasswordCorreo('');
       await refrescarUsuario();
       setMensaje('Correo guardado.');
     } catch (err) {
@@ -75,23 +84,25 @@ export function Ajustes() {
   const guardarToken = async () => {
     if (!token.trim()) return;
     setMensajeTelegram(null);
+    setErrorTelegram(null);
     try {
       const resultado = await configurarTelegram(token.trim());
       setToken('');
       setMensajeTelegram(resultado.detalle ?? 'Bot conectado.');
       await cargarTelegram();
     } catch (err) {
-      setMensajeTelegram(`Error: ${err instanceof Error ? err.message : 'No se pudo conectar'}`);
+      setErrorTelegram(`Error: ${err instanceof Error ? err.message : 'No se pudo conectar'}`);
     }
   };
 
   const probar = async () => {
     setMensajeTelegram(null);
+    setErrorTelegram(null);
     try {
       const resultado = await probarTelegram();
       setMensajeTelegram(resultado.detalle ?? 'Mensaje de prueba enviado.');
     } catch (err) {
-      setMensajeTelegram(`Error: ${err instanceof Error ? err.message : 'No se pudo enviar'}`);
+      setErrorTelegram(`Error: ${err instanceof Error ? err.message : 'No se pudo enviar'}`);
     }
   };
 
@@ -178,9 +189,11 @@ export function Ajustes() {
               <span>
                 {cargandoTelegram
                   ? 'Consultando estado del bot…'
-                  : telegram?.bot_token_guardado
-                    ? `Bot configurado${telegram.chat_id ? ` · chat ${telegram.chat_id}` : ''}. Se enviará un respaldo cada día a las 11:00 PM.`
-                    : 'No hay bot configurado. El respaldo se envía cada día a las 11:00 PM.'}
+                  : errorTelegram
+                    ? errorTelegram
+                    : telegram?.bot_token_guardado
+                      ? `Bot configurado${telegram.chat_id ? ` · chat ${telegram.chat_id}` : ''}. Se enviará un respaldo cada día a las 11:00 PM.`
+                      : 'No hay bot configurado. El respaldo se envía cada día a las 11:00 PM.'}
               </span>
             </div>
             <div className="telegram-fila">
@@ -203,6 +216,7 @@ export function Ajustes() {
               </Boton>
             </div>
             {mensajeTelegram && <div className="exito-burbuja">{mensajeTelegram}</div>}
+            {errorTelegram && <div className="error-burbuja">{errorTelegram}</div>}
           </div>
         </>
       )}
@@ -217,13 +231,14 @@ export function Ajustes() {
           </span>
         </div>
       </div>
-      <div className="ajustes-fila">
-        <div style={{ flex: 1 }}>
+      <div className="ajustes-fila columna">
+        <div>
           <strong>Correo</strong>
           <span>Usado para verificación y recuperación de cuenta.</span>
         </div>
         <div className="telegram-fila">
           <Campo type="email" icono={<Mail size={16} />} valor={correo} onChange={setCorreo} placeholder="tucorreo@ejemplo.com" />
+          <Campo type="password" valor={passwordCorreo} onChange={setPasswordCorreo} placeholder="Contraseña" />
           <Boton variante="secundario" onClick={guardarCorreo} cargando={guardandoCorreo}>
             Guardar
           </Boton>
@@ -258,19 +273,29 @@ function MfaModal({
   const [qr, setQr] = useState<string | null>(null);
   const [secreto, setSecreto] = useState('');
   const [codigo, setCodigo] = useState('');
+  const [password, setPassword] = useState('');
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
+  const temporizadorRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (abierto) {
       setPaso('menu');
       setQr(null);
       setCodigo('');
+      setPassword('');
       setError(null);
       setExito(null);
     }
   }, [abierto]);
+
+  useEffect(
+    () => () => {
+      if (temporizadorRef.current !== null) window.clearTimeout(temporizadorRef.current);
+    },
+    [],
+  );
 
   const activar = async () => {
     setCargando(true);
@@ -288,13 +313,16 @@ function MfaModal({
   };
 
   const confirmarActivacion = async () => {
-    if (codigo.length !== 6) return;
+    if (cargando || codigo.length !== 6 || password.length < 6) {
+      setError('Código de 6 dígitos y contraseña de al menos 6 caracteres.');
+      return;
+    }
     setCargando(true);
     setError(null);
     try {
-      await mfaVerifySetup(secreto, codigo);
+      await mfaVerifySetup(secreto, codigo, password);
       setExito('Verificación en dos pasos activada.');
-      setTimeout(() => {
+      temporizadorRef.current = window.setTimeout(() => {
         onCambio();
         onCerrar();
       }, 1200);
@@ -306,13 +334,13 @@ function MfaModal({
   };
 
   const desactivar = async () => {
-    if (codigo.length !== 6) return;
+    if (cargando || codigo.length !== 6) return;
     setCargando(true);
     setError(null);
     try {
       await mfaDisable(codigo);
       setExito('Verificación en dos pasos desactivada.');
-      setTimeout(() => {
+      temporizadorRef.current = window.setTimeout(() => {
         onCambio();
         onCerrar();
       }, 1200);
@@ -363,9 +391,16 @@ function MfaModal({
             inputMode="numeric"
             maxLength={6}
           />
+          <label className="login-etiqueta">Contraseña</label>
+          <Campo
+            type="password"
+            valor={password}
+            onChange={setPassword}
+            placeholder="Tu contraseña actual"
+          />
           {error && <div className="error-burbuja">{error}</div>}
           {exito && <div className="exito-burbuja">{exito}</div>}
-          <Boton onClick={confirmarActivacion} cargando={cargando} deshabilitado={codigo.length !== 6}>
+          <Boton onClick={confirmarActivacion} cargando={cargando} deshabilitado={codigo.length !== 6 || password.length < 6}>
             Confirmar
           </Boton>
         </div>

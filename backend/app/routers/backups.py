@@ -45,8 +45,8 @@ def descargar_respaldo(
     db: Session = Depends(get_db),
     usuario: User = Depends(get_current_user),
 ):
-    """Respaldo completo de la base de datos (gzip JSON). Solo admin."""
-    contenido = generar_backup(db)
+    """Respaldo de la propia empresa (gzip JSON). Solo admin."""
+    contenido = generar_backup(db, usuario.organization_id)
     nombre = f"respaldo-{datetime.utcnow():%Y%m%d-%H%M}.json.gz"
     return Response(
         content=contenido,

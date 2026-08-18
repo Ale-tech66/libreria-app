@@ -12,8 +12,13 @@ def registrar(
     usuario_id: int | None = None,
     username: str | None = None,
     organization_id: int | None = None,
+    commit: bool = True,
 ) -> AuditLog:
-    """Registra una acción crítica en el log de auditoría."""
+    """Registra una acción crítica en el log de auditoría.
+
+    Por defecto hace commit. Con `commit=False` deja el registro pendiente
+    en la transacción actual (útil para que venta + auditoría sean atómicas).
+    """
     entrada = AuditLog(
         organization_id=organization_id,
         usuario_id=usuario_id,
@@ -24,5 +29,6 @@ def registrar(
         detalle=detalle,
     )
     db.add(entrada)
-    db.commit()
+    if commit:
+        db.commit()
     return entrada

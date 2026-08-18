@@ -20,6 +20,18 @@ const METODOS: { id: MetodoPago; etiqueta: string; icono: React.ElementType }[] 
   { id: 'yape', etiqueta: 'Yape', icono: Smartphone },
 ];
 
+// Notifica a AppShell cuántos productos hay en el carrito (para avisar antes
+// de navegar a otra pantalla y perder el carrito sin cobrar).
+type ListenerCarrito = (n: number) => void;
+const listenersCarrito = new Set<ListenerCarrito>();
+
+export function onCarritoCambio(listener: ListenerCarrito): () => void {
+  listenersCarrito.add(listener);
+  return () => {
+    listenersCarrito.delete(listener);
+  };
+}
+
 export function PuntoVenta() {
   const [items, setItems] = useState<ItemCarrito[]>([]);
   const [codigo, setCodigo] = useState('');
@@ -28,10 +40,15 @@ export function PuntoVenta() {
   const [error, setError] = useState<string | null>(null);
   const [recibo, setRecibo] = useState<ReciboOut | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const cobrandoRef = useRef(false);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    listenersCarrito.forEach((l) => l(items.length));
+  }, [items]);
 
   const agregar = useCallback((producto: Producto) => {
     setItems((prev) => {
@@ -77,10 +94,14 @@ export function PuntoVenta() {
     setItems((prev) => prev.filter((i) => i.producto.id !== id));
   };
 
-  const total = items.reduce((acc, i) => acc + i.producto.precio_venta * i.cantidad, 0);
+  const total = Math.round(
+    items.reduce((acc, i) => acc + i.producto.precio_venta * i.cantidad, 0) * 100,
+  ) / 100;
 
   const cobrar = async () => {
-    if (items.length === 0 || cargando) return;
+    // Candado síncrono: el doble clic (o Enter) no puede crear dos ventas
+    if (items.length === 0 || cobrandoRef.current) return;
+    cobrandoRef.current = true;
     setCargando(true);
     setError(null);
     try {
@@ -88,13 +109,19 @@ export function PuntoVenta() {
         metodo_pago: metodo,
         detalles: items.map((i) => ({ producto_id: i.producto.id, cantidad: i.cantidad })),
       });
-      const datos = await getRecibo(venta.id);
+      // La venta YA se registró: se limpia el carrito de inmediato para que
+      // un fallo al cargar el recibo (red) no produzca una segunda venta.
       setItems([]);
       setMetodo('efectivo');
-      setRecibo(datos);
+      try {
+        setRecibo(await getRecibo(venta.id));
+      } catch {
+        setError('Venta registrada, pero no se pudo cargar el recibo. Revisa Historial.');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo registrar la venta');
     } finally {
+      cobrandoRef.current = false;
       setCargando(false);
     }
   };
@@ -116,9 +143,15 @@ export function PuntoVenta() {
                 onChange={(e) => setCodigo(e.target.value)}
                 placeholder="Código de barras…"
                 autoFocus
+                onBlur={() => {
+                  // El lector USB escribe en el elemento con foco: si se pierde
+                  // (clic en el carrito), el Enter del lector dispararía el botón
+                  // enfocado. El foco vuelve al campo del código.
+                  setTimeout(() => inputRef.current?.focus(), 0);
+                }}
               />
             </div>
-            <Boton type="submit">
+            <Boton type="submit" deshabilitado={cargando}>
               <Barcode size={17} /> Agregar
             </Boton>
           </form>

@@ -227,16 +227,19 @@ class TestRecuperarPassword:
         )
         assert nueva.status_code == 200
 
-    def test_recuperar_usuario_sin_correo(self, client):
+    def test_recuperar_usuario_sin_correo_responde_ok(self, client):
+        """Anti-enumeración: no se revela si el usuario tiene correo."""
         response = _registrar_bootstrap(client, username="sincorreo", correo=None)
         assert response.status_code == 200
         recuperar = client.post("/auth/recuperar", json={"username": "sincorreo"})
-        assert recuperar.status_code == 400
-        assert "correo" in recuperar.json()["detail"]
+        assert recuperar.status_code == 200
+        assert recuperar.json() == {"ok": True}
 
-    def test_recuperar_usuario_inexistente(self, client):
+    def test_recuperar_usuario_inexistente_responde_ok(self, client):
+        """Anti-enumeración: un usuario inexistente da la misma respuesta."""
         response = client.post("/auth/recuperar", json={"username": "fantasma"})
-        assert response.status_code == 404
+        assert response.status_code == 200
+        assert response.json() == {"ok": True}
 
     def test_recuperar_sin_smtp_dice_no_configurado(self, client, monkeypatch):
         _registrar_bootstrap(client, username="sinmail", correo="x@y.com")
@@ -249,4 +252,4 @@ class TestRecuperarPassword:
         monkeypatch.setattr(auth_mod, "enviar_codigo", no_envia)
         response = client.post("/auth/recuperar", json={"username": "sinmail"})
         assert response.status_code == 503
-        assert "SMTP" in response.json()["detail"]
+        assert "No se pudo enviar el correo" in response.json()["detail"]

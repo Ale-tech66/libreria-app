@@ -23,9 +23,26 @@ function crearVentana(): void {
 
   ventana.once('ready-to-show', () => ventana.show());
 
+  const URL_SEGURA = /^https?:\/\/(libreria-api-4lr3\.onrender\.com|(accounts|api|oauth2)\.google\.com|mail\.google\.com)\//;
+
   ventana.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url);
+    if (URL_SEGURA.test(url)) {
+      shell.openExternal(url);
+    }
     return { action: 'deny' };
+  });
+
+  ventana.webContents.on('will-navigate', (evento, url) => {
+    const actual = ventana.webContents.getURL();
+    if (url === actual) return;
+    const esInterna =
+      (isDev && !!process.env.VITE_DEV_SERVER_URL && url.startsWith(process.env.VITE_DEV_SERVER_URL)) ||
+      (!isDev && url.startsWith('file:'));
+    if (esInterna) return;
+    evento.preventDefault();
+    if (URL_SEGURA.test(url)) {
+      void shell.openExternal(url);
+    }
   });
 
   if (isDev) {

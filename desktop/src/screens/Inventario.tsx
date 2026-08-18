@@ -28,9 +28,13 @@ export function Inventario() {
   const [formCodigo, setFormCodigo] = useState<string | undefined>(undefined);
   const [codigoEscaneo, setCodigoEscaneo] = useState('');
   const escanerRef = useRef<HTMLInputElement>(null);
+  const secuenciaRef = useRef(0);
 
   const cargar = useCallback(
     async (pag: number, q: string, reiniciar: boolean) => {
+      // "Última petición gana": una respuesta lenta de una búsqueda o página
+      // anterior no puede pisar ni mezclar la lista actual.
+      const sec = ++secuenciaRef.current;
       if (reiniciar) setCargando(true);
       else setCargandoMas(true);
       setError(null);
@@ -41,15 +45,19 @@ export function Inventario() {
           page_size: POR_PAGINA,
           incluir_inactivos: puedeGestionar,
         });
+        if (sec !== secuenciaRef.current) return;
         setItems((prev) => (reiniciar ? datos.items : [...prev, ...datos.items]));
         setTotal(datos.total);
         setPagina(pag);
         setHayMas(pag * datos.page_size < datos.total);
       } catch (err) {
+        if (sec !== secuenciaRef.current) return;
         setError(err instanceof Error ? err.message : 'No se pudo cargar el inventario');
       } finally {
-        setCargando(false);
-        setCargandoMas(false);
+        if (sec === secuenciaRef.current) {
+          setCargando(false);
+          setCargandoMas(false);
+        }
       }
     },
     [puedeGestionar],

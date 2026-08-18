@@ -4,13 +4,20 @@ import { useMemo } from 'react';
 import type { ReciboOut } from '../api/types';
 import { Modal } from './ui';
 
+export function escaparHtml(valor: unknown): string {
+  return String(valor ?? '').replace(
+    /[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
+  );
+}
+
 export function htmlRecibo(recibo: ReciboOut): string {
   const v = recibo.venta;
   const filas = v.detalles
     .map(
       (d) => `
       <tr>
-        <td>${d.producto_nombre}</td>
+        <td>${escaparHtml(d.producto_nombre)}</td>
         <td class="c">x${d.cantidad}</td>
         <td class="c">$${(d.precio_unitario * d.cantidad).toFixed(2)}</td>
       </tr>`,
@@ -31,14 +38,14 @@ export function htmlRecibo(recibo: ReciboOut): string {
     @media print { body { width: 100%; } }
   </style></head><body>
     <div class="negocio">
-      <h1>${recibo.negocio.nombre}</h1>
-      ${recibo.negocio.correo ? `<div>${recibo.negocio.correo}</div>` : ''}
-      ${recibo.negocio.telefono ? `<div>${recibo.negocio.telefono}</div>` : ''}
+      <h1>${escaparHtml(recibo.negocio.nombre)}</h1>
+      ${recibo.negocio.correo ? `<div>${escaparHtml(recibo.negocio.correo)}</div>` : ''}
+      ${recibo.negocio.telefono ? `<div>${escaparHtml(recibo.negocio.telefono)}</div>` : ''}
     </div>
     <div class="sep"></div>
     <div class="fila"><span>Recibo #${v.id}</span><span>${new Date(v.fecha).toLocaleString('es-PE')}</span></div>
-    ${recibo.vendedor ? `<div class="fila"><span>Vendedor</span><span>${recibo.vendedor}</span></div>` : ''}
-    <div class="fila"><span>Método</span><span>${v.metodo_pago}</span></div>
+    ${recibo.vendedor ? `<div class="fila"><span>Vendedor</span><span>${escaparHtml(recibo.vendedor)}</span></div>` : ''}
+    <div class="fila"><span>Método</span><span>${escaparHtml(v.metodo_pago)}</span></div>
     <div class="sep"></div>
     <table>${filas}</table>
     <div class="sep"></div>

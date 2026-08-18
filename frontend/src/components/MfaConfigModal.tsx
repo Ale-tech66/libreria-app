@@ -21,6 +21,7 @@ export default function MfaConfigModal({ visible, onClose }: MfaConfigModalProps
   const [otpauthUrl, setOtpauthUrl] = useState('');
   const [secreto, setSecreto] = useState('');
   const [code, setCode] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -28,6 +29,7 @@ export default function MfaConfigModal({ visible, onClose }: MfaConfigModalProps
     if (visible) {
       setPaso('menu');
       setCode('');
+      setPassword('');
       setError(null);
     }
   }, [visible]);
@@ -49,17 +51,18 @@ export default function MfaConfigModal({ visible, onClose }: MfaConfigModalProps
 
   const confirmarActivacion = async () => {
     setError(null);
-    if (code.length !== 6) {
-      setError('Ingresa el código de 6 dígitos');
+    if (code.length !== 6 || password.length < 6) {
+      setError('Ingresa el código de 6 dígitos y tu contraseña');
       return;
     }
     setLoading(true);
     try {
-      await mfaVerifySetup(secreto, code);
+      await mfaVerifySetup(secreto, code, password);
       await refrescarUsuario();
       Alert.alert('MFA activado', 'Tu cuenta ahora requiere el código de 6 dígitos al iniciar sesión.');
       setPaso('menu');
       setCode('');
+      setPassword('');
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Código incorrecto');
@@ -160,6 +163,15 @@ export default function MfaConfigModal({ visible, onClose }: MfaConfigModalProps
                   maxLength={6}
                   value={code}
                   onChangeText={(t) => setCode(t.replace(/[^0-9]/g, ''))}
+                />
+                <ThemedInput
+                  icono="lock-closed-outline"
+                  label="Contraseña"
+                  placeholder="Tu contraseña actual"
+                  secureTextEntry
+                  autoCapitalize="none"
+                  value={password}
+                  onChangeText={setPassword}
                 />
                 {error && <Text style={[styles.error, { color: tema.peligro }]}>{error}</Text>}
                 <ThemedButton
