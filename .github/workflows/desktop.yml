@@ -5,6 +5,8 @@ on:
   push:
     paths:
       - 'desktop/**'
+    tags:
+      - 'desktop-v*'
 
 jobs:
   build:
@@ -51,3 +53,29 @@ jobs:
             desktop/release/*.exe
             desktop/release/*.dmg
           if-no-files-found: error
+
+  publicar:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: LibreriaApp-*
+          path: instaladores
+          merge-multiple: true
+
+      - name: Publicar release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Librería App Escritorio ${{ github.ref_name }}
+          body: |
+            Instaladores de la versión de escritorio (Windows y macOS).
+
+            - **Windows**: archivo `.exe` (instalador NSIS).
+            - **macOS**: archivo `.dmg` (Intel y Apple Silicon).
+          files: |
+            instaladores/*.exe
+            instaladores/*.dmg
+          generate_release_notes: true

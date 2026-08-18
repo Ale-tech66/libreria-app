@@ -1,0 +1,38 @@
+name: Página promocional
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'promo/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v5
+
+      - name: Subir la página
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: promo
+
+      - name: Desplegar
+        id: despliegue
+        uses: actions/deploy-pages@v4
