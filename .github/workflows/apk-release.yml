@@ -21,6 +21,7 @@ jobs:
       - name: Crear release
         env:
           GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           gh release create v1.2.0 "LibreriaApp-1.2.0.apk" \
             --title "Librería App v1.2.0" \
