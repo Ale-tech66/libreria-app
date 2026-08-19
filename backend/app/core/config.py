@@ -1,13 +1,20 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
     DATABASE_URL: str
-    SECRET_KEY: str
+    # Clave maestra: firma los códigos de verificación y cifra los respaldos.
+    # Debe ser larga y aleatoria (mínimo 32 caracteres), p. ej. `secrets.token_urlsafe(64)`.
+    SECRET_KEY: str = Field(min_length=32)
+    # Clave OPCIONAL solo para firmar JWT (si se define, los tokens se firman
+    # con ella y SECRET_KEY queda reservada para códigos y respaldos).
+    JWT_SECRET_KEY: str | None = None
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30
     UPLOAD_DIR: str = "uploads"
+    ENVIRONMENT: str = "development"  # development | production
 
     # Correo (SMTP). Vacíos = envío de correo desactivado.
     SMTP_HOST: str = ""

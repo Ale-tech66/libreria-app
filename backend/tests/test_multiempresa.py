@@ -171,7 +171,7 @@ class TestRegistroEmpresa:
             "/auth/register",
             json={
                 "username": "dueno",
-                "password": "123456",
+                "password": "12345678",
                 "rol": "ventas",
                 "nombre_negocio": "La Feria del Libro",
                 "tipo_negocio": "libreria",
@@ -189,7 +189,7 @@ class TestRegistroEmpresa:
             headers=auth(admin_token),
             json={
                 "username": "empleado",
-                "password": "123456",
+                "password": "12345678",
                 "rol": "ventas",
                 "nombre_negocio": "Otra Empresa",
             },

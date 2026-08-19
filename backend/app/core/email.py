@@ -9,6 +9,7 @@ import logging
 import secrets
 import smtplib
 import socket
+import ssl
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
@@ -123,12 +124,15 @@ def enviar_correo(destinatario: str, asunto: str, cuerpo: str) -> None:
     # Prueba el puerto configurado y, si la red falla, el alternativo (465/587)
     alternativo = 465 if settings.SMTP_PORT != 465 else 587
     ultimo_error: Exception | None = None
+    # TLS con verificación real del certificado: los códigos de verificación
+    # y recuperación no deben poder interceptarse (MITM en la red).
+    contexto_tls = ssl.create_default_context()
     for puerto in (settings.SMTP_PORT, alternativo):
         try:
             clase = _SMTP_SSL if puerto == 465 else _SMTP
             with clase(settings.SMTP_HOST, puerto, timeout=30) as smtp:
                 if puerto != 465:
-                    smtp.starttls()
+                    smtp.starttls(context=contexto_tls)
                 smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
                 smtp.send_message(mensaje)
             logger.info("Correo enviado a %s: %s", destinatario, asunto)

@@ -16,7 +16,7 @@ router = APIRouter(
 
 @router.get("/", response_model=Paginated[AuditLogOut])
 def listar_auditoria(
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=1000),
     page_size: int = Query(default=50, ge=1, le=200),
     recurso: str | None = Query(default=None, description="Filtra por tipo: usuario, producto, venta, sesion"),
     db: Session = Depends(get_db),

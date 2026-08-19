@@ -1,7 +1,7 @@
 import gzip
 import json
 
-from app.core.backups import generar_backup, restaurar_backup
+from app.core.backups import descifrar_respaldo, generar_backup, restaurar_backup
 from tests.test_ventas import auth, crear_producto
 
 
@@ -23,11 +23,13 @@ class TestDescargarRespaldo:
         response = _backup(client, admin_token)
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/gzip"
-        datos = json.loads(gzip.decompress(response.content))
+        datos = json.loads(gzip.decompress(descifrar_respaldo(response.content)))
         assert datos["app"] == "libreria-app"
         assert len(datos["tablas"]["productos"]) == 1
         assert datos["tablas"]["productos"][0]["stock"] == 3
         assert datos["tablas"]["users"][0]["username"] == "admin"
+        # Las credenciales NUNCA viajan en el respaldo
+        assert "hashed_password" not in datos["tablas"]["users"][0]
 
 
 class TestConfigTelegram:
@@ -42,7 +44,7 @@ class TestConfigTelegram:
 
         estado = client.get("/backups/telegram", headers=auth(admin_token)).json()
         assert estado["bot_token_guardado"] is True
-        assert estado["bot_token_sufijo"] == "...:ABC"
+        assert estado["bot_token_sufijo"] == "••••"
         assert estado["chat_id"] == "987654:Juan"
 
     def test_sin_chat_id_busca_deteccion(self, client, admin_token):

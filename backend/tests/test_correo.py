@@ -27,7 +27,7 @@ def _correos_enviados(monkeypatch):
 def _registrar_bootstrap(client, **extra):
     payload = {
         "username": "duena",
-        "password": "123456",
+        "password": "12345678",
         "correo": "duena@tienda.com",
         "nombre_negocio": "Tienda de la Dueña",
         **extra,
@@ -115,7 +115,7 @@ class TestVerificacionCorreo:
 
         # Sin verificar no puede iniciar sesión
         login = client.post(
-            "/auth/login", data={"username": "duena", "password": "123456"}
+            "/auth/login", data={"username": "duena", "password": "12345678"}
         )
         assert login.status_code == 403
         assert "Verifica tu correo" in login.json()["detail"]
@@ -127,7 +127,10 @@ class TestVerificacionCorreo:
             "/auth/verificar-codigo",
             json={"username": "duena", "code": "000000"},
         )
-        assert response.status_code == 401
+        # Mensaje genérico: distinguir entre "código incorrecto" y "usuario
+        # inexistente" permitiría enumerar cuentas.
+        assert response.status_code == 400
+        assert response.json()["detail"] == "No se pudo verificar la cuenta"
 
     def test_codigo_correcto_activa_y_puede_loguear(self, client, monkeypatch):
         enviados = _correos_enviados(monkeypatch)
@@ -142,7 +145,7 @@ class TestVerificacionCorreo:
         assert response.json()["ok"] is True
 
         login = client.post(
-            "/auth/login", data={"username": "duena", "password": "123456"}
+            "/auth/login", data={"username": "duena", "password": "12345678"}
         )
         assert login.status_code == 200
         assert "access_token" in login.json()
@@ -164,7 +167,6 @@ class TestVerificacionCorreo:
             json={"username": "duena", "code": "123456"},
         )
         assert response.status_code == 400
-        assert "expiró" in response.json()["detail"]
 
     def test_reenviar_codigo(self, client, monkeypatch):
         enviados = _correos_enviados(monkeypatch)
@@ -203,12 +205,12 @@ class TestRecuperarPassword:
         assert recuperar.status_code == 200
         codigo = enviados[-1]["codigo"]
 
-        # Código incorrecto
+        # Código incorrecto (mensaje genérico, anti-enumeración)
         mal = client.post(
             "/auth/recuperar-confirmar",
             json={"username": "cliente", "code": "999999", "nueva_password": "nueva123"},
         )
-        assert mal.status_code == 401
+        assert mal.status_code == 400
 
         # Código correcto
         ok = client.post(

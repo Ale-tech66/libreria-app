@@ -5,7 +5,7 @@ class TestRegistro:
     def test_register_primer_usuario_es_admin(self, client):
         response = client.post(
             "/auth/register",
-            json={"username": "fundador", "password": "123456", "rol": "ventas"},
+            json={"username": "fundador", "password": "12345678", "rol": "ventas"},
         )
         assert response.status_code == 200
         assert response.json()["rol"] == "admin"
@@ -14,7 +14,7 @@ class TestRegistro:
         crear_usuario("existente", "123456", "ventas")
         response = client.post(
             "/auth/register",
-            json={"username": "hacker", "password": "123456", "rol": "admin"},
+            json={"username": "hacker", "password": "12345678", "rol": "admin"},
         )
         assert response.status_code == 403
 
@@ -22,7 +22,7 @@ class TestRegistro:
         response = client.post(
             "/auth/register",
             headers=auth(admin_token),
-            json={"username": "nuevo", "password": "123456", "rol": "ventas"},
+            json={"username": "nuevo", "password": "12345678", "rol": "ventas"},
         )
         assert response.status_code == 200
         assert response.json()["rol"] == "ventas"
@@ -31,7 +31,7 @@ class TestRegistro:
         response = client.post(
             "/auth/register",
             headers=auth(admin_token),
-            json={"username": "x", "password": "123456", "rol": "superadmin"},
+            json={"username": "x", "password": "12345678", "rol": "superadmin"},
         )
         assert response.status_code == 422
 
@@ -39,7 +39,7 @@ class TestRegistro:
         response = client.post(
             "/auth/register",
             headers=auth(ventas_token),
-            json={"username": "otro", "password": "123456", "rol": "admin"},
+            json={"username": "otro", "password": "12345678", "rol": "admin"},
         )
         assert response.status_code == 403
 
@@ -47,12 +47,12 @@ class TestRegistro:
         client.post(
             "/auth/register",
             headers=auth(admin_token),
-            json={"username": "dup", "password": "123456", "rol": "ventas"},
+            json={"username": "dup", "password": "12345678", "rol": "ventas"},
         )
         response = client.post(
             "/auth/register",
             headers=auth(admin_token),
-            json={"username": "dup", "password": "123456", "rol": "ventas"},
+            json={"username": "dup", "password": "12345678", "rol": "ventas"},
         )
         assert response.status_code == 400
 

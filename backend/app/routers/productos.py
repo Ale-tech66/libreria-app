@@ -2,13 +2,13 @@ from pathlib import Path
 import time
 
 import requests
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role
+from app.core.deps import get_current_user, ip_cliente, require_role
 from app.models.producto import Producto
 from app.models.user import User
 from app.schemas import Paginated, ProductoCreate, ProductoOut
@@ -183,8 +183,11 @@ def _borrar_foto(foto: str | None) -> None:
         _cloudinary_borrar(foto)
         return
     if foto.startswith("http") and _r2_activo():
-        # URL pública de R2: borra el objeto
-        clave = foto.rsplit("/", 1)[-1]
+        # URL pública de R2: borra el objeto (con su ruta completa, no solo
+        # el último segmento: la clave puede ser "productos/producto_N.jpg").
+        from urllib.parse import urlparse
+
+        clave = urlparse(foto).path.lstrip("/")
         try:
             _r2_cliente().delete_object(Bucket=settings.R2_BUCKET, Key=clave)
         except Exception:  # noqa: BLE001
@@ -198,7 +201,7 @@ def _borrar_foto(foto: str | None) -> None:
 @router.get("/", response_model=Paginated[ProductoOut])
 def listar_productos(
     q: str = Query(default="", max_length=100, description="Filtra por nombre o código de barras"),
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=1000),
     page_size: int = Query(default=50, ge=1, le=200),
     incluir_inactivos: bool = Query(default=False),
     db: Session = Depends(get_db),
@@ -228,6 +231,7 @@ def listar_productos(
 @router.post("/", response_model=ProductoOut)
 def crear_producto(
     producto: ProductoCreate,
+    request: Request,
     db: Session = Depends(get_db),
     usuario: User = Depends(require_role("admin", "inventario")),
 ):
@@ -257,6 +261,7 @@ def crear_producto(
         usuario_id=usuario.id,
         username=usuario.username,
         organization_id=usuario.organization_id,
+        ip=ip_cliente(request),
     )
     return nuevo_producto
 
@@ -284,6 +289,7 @@ def buscar_producto(
 def actualizar_producto(
     producto_id: int,
     producto_update: ProductoCreate,
+    request: Request,
     db: Session = Depends(get_db),
     usuario: User = Depends(require_role("admin", "inventario")),
 ):
@@ -312,6 +318,7 @@ def actualizar_producto(
         usuario_id=usuario.id,
         username=usuario.username,
         organization_id=usuario.organization_id,
+        ip=ip_cliente(request),
     )
     return producto
 
@@ -319,6 +326,7 @@ def actualizar_producto(
 @router.delete("/{producto_id}", response_model=ProductoOut)
 def desactivar_producto(
     producto_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     usuario: User = Depends(require_role("admin", "inventario")),
 ):
@@ -346,6 +354,7 @@ def desactivar_producto(
         usuario_id=usuario.id,
         username=usuario.username,
         organization_id=usuario.organization_id,
+        ip=ip_cliente(request),
     )
     return producto
 
@@ -353,6 +362,7 @@ def desactivar_producto(
 @router.post("/{producto_id}/foto", response_model=ProductoOut)
 def subir_foto(
     producto_id: int,
+    request: Request,
     archivo: UploadFile = File(...),
     db: Session = Depends(get_db),
     usuario: User = Depends(require_role("admin", "inventario")),
@@ -387,5 +397,6 @@ def subir_foto(
         usuario_id=usuario.id,
         username=usuario.username,
         organization_id=usuario.organization_id,
+        ip=ip_cliente(request),
     )
     return producto

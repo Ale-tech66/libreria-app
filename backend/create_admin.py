@@ -1,8 +1,13 @@
 """
-Crea el usuario administrador inicial.
+Crea el usuario administrador inicial (SOLO si no existe).
 
 Uso:
     ADMIN_USERNAME=admin ADMIN_PASSWORD=supersecreto python create_admin.py
+
+Seguridad:
+- Si el usuario YA existe, no se toca nada (no resetea contraseña ni borra
+  el MFA en cada deploy). Para forzar un reset manual:
+  FORCE_ADMIN_RESET=1 ADMIN_USERNAME=admin ADMIN_PASSWORD=nueva python create_admin.py
 
 Requiere el .env con DATABASE_URL (o la variable de entorno ya exportada).
 """
@@ -22,8 +27,8 @@ def main():
     if not password:
         print("ERROR: Define ADMIN_PASSWORD para crear el admin inicial.")
         sys.exit(1)
-    if len(password) < 6:
-        print("ERROR: ADMIN_PASSWORD debe tener al menos 6 caracteres.")
+    if len(password) < 8:
+        print("ERROR: ADMIN_PASSWORD debe tener al menos 8 caracteres.")
         sys.exit(1)
 
     Base.metadata.create_all(bind=engine)
@@ -31,14 +36,21 @@ def main():
     try:
         existe = db.query(User).filter(User.username == username).first()
         if existe:
-            existe.hashed_password = get_password_hash(password)
-            existe.rol = "admin"
-            existe.activo = True
-            # Reseteo completo: también limpia el MFA, para recuperar la
-            # cuenta si el admin perdió el acceso a su app de autenticación.
-            existe.mfa_secret = None
-            db.commit()
-            print(f"Usuario admin '{username}' actualizado (contraseña y MFA reiniciados).")
+            if os.getenv("FORCE_ADMIN_RESET") == "1":
+                existe.hashed_password = get_password_hash(password)
+                existe.rol = "admin"
+                existe.activo = True
+                existe.mfa_secret = None
+                db.commit()
+                print(
+                    f"Usuario admin '{username}' actualizado "
+                    "(contraseña y MFA reiniciados por FORCE_ADMIN_RESET)."
+                )
+            else:
+                print(
+                    f"El usuario admin '{username}' ya existe: no se modifica "
+                    "(ADMIN_PASSWORD es de UN SOLO USO; el MFA se conserva)."
+                )
             return
         db.add(User(
             username=username,

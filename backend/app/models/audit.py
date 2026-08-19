@@ -19,3 +19,5 @@ class AuditLog(Base):
     recurso_id = Column(Integer, nullable=True)
     detalle = Column(Text, nullable=True)
     fecha = Column(DateTime, default=datetime.now, nullable=False)
+    # IP desde la que se hizo la acción (para trazar accesos comprometidos)
+    ip = Column(String(45), nullable=True)

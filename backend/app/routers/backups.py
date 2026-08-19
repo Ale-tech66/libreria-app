@@ -43,10 +43,14 @@ class TelegramResultado(BaseModel):
 @router.get("/descargar")
 def descargar_respaldo(
     db: Session = Depends(get_db),
-    usuario: User = Depends(get_current_user),
+    admin: User = Depends(require_role("admin")),
 ):
-    """Respaldo de la propia empresa (gzip JSON). Solo admin."""
-    contenido = generar_backup(db, usuario.organization_id)
+    """Respaldo de la propia empresa (gzip cifrado). Solo admin.
+
+    El archivo está CIFRADO con la SECRET_KEY del servidor: sin esa clave
+    no se puede leer (útil para restaurar con restore_backup.py).
+    """
+    contenido = generar_backup(db, admin.organization_id)
     nombre = f"respaldo-{datetime.utcnow():%Y%m%d-%H%M}.json.gz"
     return Response(
         content=contenido,
@@ -64,7 +68,8 @@ def estado_telegram(
     chat = _obtener_setting(db, usuario.organization_id, "telegram_chat_id")
     return {
         "bot_token_guardado": bool(token),
-        "bot_token_sufijo": f"...{token[-4:]}" if token else None,
+        # No se expone ni un fragmento del token real
+        "bot_token_sufijo": "••••" if token else None,
         "chat_id": chat,
     }
 
@@ -108,6 +113,10 @@ def probar_telegram(
     chat_id = chat_guardado.split(":", 1)[0]
     try:
         enviar_telegram(token, chat_id, "✅ Conectado: recibirás el respaldo diario aquí.")
-    except RuntimeError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError:
+        # Mensaje genérico: la respuesta de Telegram podría confirmar tokens adivinados
+        raise HTTPException(
+            status_code=400,
+            detail="No se pudo enviar el mensaje de prueba. Revisa el token y el chat.",
+        ) from None
     return {"ok": True, "chat_id": chat_guardado, "detalle": "Mensaje de prueba enviado"}

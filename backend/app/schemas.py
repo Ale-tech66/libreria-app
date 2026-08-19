@@ -14,7 +14,7 @@ METODOS_PAGO = Literal["efectivo", "tarjeta", "transferencia", "yape"]
 
 class UserCreate(BaseModel):
     username: str = Field(min_length=3, max_length=50)
-    password: str = Field(min_length=6, max_length=72)
+    password: str = Field(min_length=8, max_length=72)
     rol: ROLES = ROL_VENTAS
     # Datos de la empresa (solo se usan al registrar la primera cuenta)
     nombre_negocio: Optional[str] = Field(default=None, max_length=200)
@@ -27,7 +27,7 @@ class UserCreate(BaseModel):
 class UserUpdate(BaseModel):
     rol: Optional[ROLES] = None
     activo: Optional[bool] = None
-    password: Optional[str] = Field(default=None, min_length=6, max_length=72)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=72)
 
 
 class UserOut(BaseModel):
@@ -85,7 +85,7 @@ class MfaVerifyRequest(BaseModel):
     """Verificación del QR: el secreto se confirma y recién ahí se guarda."""
     secret: str = Field(min_length=16, max_length=64)
     code: str = Field(min_length=6, max_length=6)
-    password: str = Field(min_length=6, max_length=72)
+    password: str = Field(min_length=8, max_length=72)
 
 
 class MfaSetupOut(BaseModel):
@@ -109,7 +109,7 @@ class RecuperarRequest(BaseModel):
 class RecuperarConfirmarRequest(BaseModel):
     username: str = Field(min_length=3, max_length=50)
     code: str = Field(min_length=6, max_length=6)
-    nueva_password: str = Field(min_length=6, max_length=72)
+    nueva_password: str = Field(min_length=8, max_length=72)
 
 
 class RegistroOut(UserOut):
@@ -126,9 +126,10 @@ class ProductoBase(BaseModel):
     nombre: str = Field(min_length=1, max_length=200)
     autor: Optional[str] = Field(default=None, max_length=150)
     editorial: Optional[str] = Field(default=None, max_length=100)
-    precio_venta: float = Field(gt=0)
-    stock: int = Field(ge=0)
-    unidades_por_caja: int = Field(default=1, ge=1)
+    # Topes para no desbordar la columna NUMERIC(10,2) al cobrar (99999999.99)
+    precio_venta: float = Field(gt=0, le=9_999_999.99)
+    stock: int = Field(ge=0, le=999_999_999)
+    unidades_por_caja: int = Field(default=1, ge=1, le=999_999_999)
     activo: bool = True
 
 
@@ -155,6 +156,9 @@ class VentaDetalleCreate(BaseModel):
 class VentaCreate(BaseModel):
     metodo_pago: METODOS_PAGO = "efectivo"
     detalles: List[VentaDetalleCreate] = Field(min_length=1, max_length=200)
+    # Id del dispositivo para idempotencia: reintentar con el mismo id no
+    # cobra dos veces (evita ventas duplicadas por doble click o reintentos).
+    id_local: Optional[str] = Field(default=None, min_length=1, max_length=100)
 
 
 class VentaPendienteSync(BaseModel):

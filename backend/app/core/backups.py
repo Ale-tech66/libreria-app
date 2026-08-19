@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import gzip
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta
@@ -8,9 +9,11 @@ from decimal import Decimal
 from typing import Any
 
 import requests
+from cryptography.fernet import Fernet
 from sqlalchemy import DateTime, delete, select, text
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import Base, SessionLocal
 from app.models.setting import Setting
 
@@ -29,7 +32,36 @@ ORDEN_TABLAS = [
     "alembic_version",
 ]
 
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
+
+# Columnas que NUNCA se vuelcan en un respaldo: hashes de contraseñas,
+# secretos MFA y tokens de bots. Si un respaldo se filtra, no compromete
+# la autenticación de nadie (los usuarios restaurados deben resetear su
+# contraseña y volver a configurar MFA).
+COLUMNAS_SENSIBLES = {"hashed_password", "mfa_secret", "telegram_bot_token"}
+
+
+def _clave_fernet() -> bytes:
+    """Deriva la clave de cifrado del respaldo desde SECRET_KEY."""
+    return base64.urlsafe_b64encode(hashlib.sha256(settings.SECRET_KEY.encode()).digest())
+
+
+def _hash_irrecuperable() -> str:
+    """Hash bcrypt de una contraseña aleatoria: nadie puede iniciar sesión
+    con ella (el usuario debe resetear su contraseña tras un restore)."""
+    from app.core.security import get_password_hash
+
+    return get_password_hash(base64.urlsafe_b64encode(__import__("secrets").token_bytes(32)).decode())
+
+
+def cifrar_respaldo(contenido: bytes) -> bytes:
+    """Cifra el respaldo gzip con Fernet (AES): sin SECRET_KEY es ilegible."""
+    return Fernet(_clave_fernet()).encrypt(contenido)
+
+
+def descifrar_respaldo(contenido: bytes) -> bytes:
+    """Descifra un respaldo cifrado con cifrar_respaldo."""
+    return Fernet(_clave_fernet()).decrypt(contenido)
 
 
 def _serializar(valor: Any) -> Any:
@@ -72,6 +104,9 @@ def generar_backup(db: Session, organization_id: int | None = None) -> bytes:
         if org_ids is not None:
             if "organization_id" in tabla.c:
                 stmt = stmt.where(tabla.c.organization_id.in_(org_ids))
+            elif nombre == "organizations":
+                # La tabla de organizaciones es global: solo la propia org
+                stmt = stmt.where(tabla.c.id.in_(org_ids))
             elif nombre == "ventas_detalles" and ids_ventas:
                 stmt = stmt.where(tabla.c.venta_id.in_(ids_ventas))
             elif nombre == "refresh_tokens" and ids_usuarios:
@@ -82,21 +117,36 @@ def generar_backup(db: Session, organization_id: int | None = None) -> bytes:
                 stmt = stmt.where(text("1 = 0"))  # tabla desconocida: nada
         filas = db.execute(stmt).mappings().all()
         contenido["tablas"][nombre] = [
-            {k: _serializar(v) for k, v in fila.items()} for fila in filas
+            {
+                k: _serializar(v)
+                for k, v in fila.items()
+                if k not in COLUMNAS_SENSIBLES
+            }
+            for fila in filas
         ]
         if nombre == "ventas":
             ids_ventas = [f["id"] for f in contenido["tablas"][nombre]]
         elif nombre == "users":
             ids_usuarios = [f["id"] for f in contenido["tablas"][nombre]]
-    return gzip.compress(json.dumps(contenido, ensure_ascii=False).encode("utf-8"))
+    return cifrar_respaldo(
+        gzip.compress(json.dumps(contenido, ensure_ascii=False).encode("utf-8"))
+    )
 
 
 def restaurar_backup(db: Session, contenido: bytes) -> dict[str, int]:
     """Vacía las tablas y las rellena desde un respaldo.
 
+    Acepta respaldos cifrados (los generados desde esta versión) y sin
+    cifrar (generados antes del cifrado). Las columnas sensibles que no
+    viajan en el respaldo se reemplazan por valores neutros: los usuarios
+    restaurados deben resetear su contraseña (hash irrecuperable) y
+    reconfigurar MFA.
     Devuelve la cantidad de filas restauradas por tabla.
     """
-    datos = json.loads(gzip.decompress(contenido))
+    try:
+        datos = json.loads(gzip.decompress(contenido))
+    except (OSError, EOFError):
+        datos = json.loads(gzip.decompress(descifrar_respaldo(contenido)))
     if datos.get("app") != "libreria-app" or datos.get("version") != BACKUP_VERSION:
         raise ValueError("El archivo no es un respaldo válido de Librería App")
 
@@ -126,6 +176,12 @@ def restaurar_backup(db: Session, contenido: bytes) -> dict[str, int]:
                     valores[clave] = datetime.fromisoformat(valor)
                 else:
                     valores[clave] = valor
+            if nombre == "users":
+                # El respaldo no trae credenciales: se restaura con un hash
+                # irrecuperable (el admin debe resetear la contraseña) y MFA off
+                if "hashed_password" not in valores:
+                    valores["hashed_password"] = _hash_irrecuperable()
+                valores.setdefault("mfa_secret", None)
             db.execute(tabla.insert().values(**valores))
         restauradas[nombre] = len(filas)
 
@@ -183,7 +239,13 @@ def _guardar_setting(db: Session, organization_id: int, clave: str, valor: str) 
 
 
 def detectar_chat_id(bot_token: str) -> str | None:
-    """Busca el chat más reciente del bot (tras que el dueño le envíe /start)."""
+    """Busca el chat más reciente del bot (tras que el dueño le envíe /start).
+
+    Si hay MÁS de un chat distinto, devuelve None: auto-apuntar al último
+    podría enviar el respaldo (con datos de la empresa) a un tercero que
+    interactuó con el bot. En ese caso el dueño debe escribir el chat_id
+    manualmente.
+    """
     try:
         respuesta = requests.get(
             f"https://api.telegram.org/bot{bot_token}/getUpdates",
@@ -200,10 +262,10 @@ def detectar_chat_id(bot_token: str) -> str | None:
         chat = mensaje.get("chat") or {}
         if chat.get("id"):
             chats[chat["id"]] = chat.get("first_name") or chat.get("username") or str(chat["id"])
-    if not chats:
+    if len(chats) != 1:
         return None
-    chat_id = list(chats.keys())[-1]
-    return f"{chat_id}:{chats[chat_id]}"
+    # Solo el id numérico (sin el nombre, que podía romper el parseo)
+    return str(next(iter(chats.keys())))
 
 
 def enviar_telegram(bot_token: str, chat_id: str, texto: str, documento: bytes | None = None, nombre: str = "") -> None:

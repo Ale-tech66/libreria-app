@@ -1,6 +1,7 @@
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from threading import Lock
+import time
 
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -13,7 +14,12 @@ from sqlalchemy.orm import Session
 from app.core.audit import registrar
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import get_current_user, get_current_user_optional, require_role
+from app.core.deps import (
+    get_current_user,
+    get_current_user_optional,
+    ip_cliente,
+    require_role,
+)
 from app.core.email import (
     codigo_correcto,
     codigo_vencido,
@@ -21,6 +27,7 @@ from app.core.email import (
     enviar_codigo,
 )
 from app.core.security import (
+    _clave_jwt,
     create_access_token,
     create_mfa_token,
     generate_refresh_token,
@@ -58,14 +65,32 @@ router = APIRouter(prefix="/auth", tags=["Autenticación"])
 _MAX_ATTEMPTS = 5
 _WINDOW = timedelta(minutes=15)
 _lock = Lock()
-_failed: dict[str, list[datetime]] = defaultdict(list)
+# Clave: (ip, username). Un atacante no puede consumir el presupuesto de
+# otro usuario desde su propia IP (evita el lockout-DoS con solo el username).
+_failed: dict[tuple[str, str], list[datetime]] = defaultdict(list)
+_MAX_ENTRIES = 20_000
 
 
-def _check_rate_limit(username: str) -> None:
+def _purgar_si_crece(diccionario: dict, limite: int = _MAX_ENTRIES) -> None:
+    """Evita el crecimiento ilimitado de memoria con claves rotativas."""
+    if len(diccionario) < limite:
+        return
+    ahora = datetime.now(timezone.utc)
+    for clave in list(diccionario.keys()):
+        intentos = [t for t in diccionario[clave] if ahora - t < _WINDOW]
+        if intentos:
+            diccionario[clave] = intentos
+        else:
+            diccionario.pop(clave, None)
+
+
+def _check_rate_limit(ip: str, username: str) -> None:
     now = datetime.now(timezone.utc)
+    clave = (ip, username)
     with _lock:
-        attempts = [t for t in _failed[username] if now - t < _WINDOW]
-        _failed[username] = attempts
+        _purgar_si_crece(_failed)
+        attempts = [t for t in _failed[clave] if now - t < _WINDOW]
+        _failed[clave] = attempts
         if len(attempts) >= _MAX_ATTEMPTS:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -73,14 +98,14 @@ def _check_rate_limit(username: str) -> None:
             )
 
 
-def _register_failure(username: str) -> None:
+def _register_failure(ip: str, username: str) -> None:
     with _lock:
-        _failed[username].append(datetime.now(timezone.utc))
+        _failed[(ip, username)].append(datetime.now(timezone.utc))
 
 
-def _clear_failures(username: str) -> None:
+def _clear_failures(ip: str, username: str) -> None:
     with _lock:
-        _failed.pop(username, None)
+        _failed.pop((ip, username), None)
 
 
 # Límite por IP (login, registro y envío de códigos): frena el password
@@ -91,16 +116,15 @@ _ip_lock = Lock()
 
 
 def _ip(request: Request) -> str:
-    xff = request.headers.get("x-forwarded-for")
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.client.host if request.client else "desconocida"
+    """IP real del cliente (ver ip_cliente en core/deps.py)."""
+    return ip_cliente(request)
 
 
 def _check_ip_rate_limit(request: Request) -> None:
     now = datetime.now(timezone.utc)
     ip = _ip(request)
     with _ip_lock:
+        _purgar_si_crece(_ip_failed)
         attempts = [t for t in _ip_failed[ip] if now - t < _WINDOW]
         _ip_failed[ip] = attempts
         if len(attempts) >= _MAX_IP_ATTEMPTS:
@@ -117,16 +141,19 @@ def _register_ip_attempt(request: Request) -> None:
 
 # Límite de intentos para códigos de 6 dígitos (verificación y recuperación):
 # sin esto, un código de 10^6 combinaciones sería forzable por fuerza bruta.
+# La clave es (ip, username): desde otra IP no se puede bloquear a la víctima.
 _MAX_CODIGO_ATTEMPTS = 5
-_codigo_failed: dict[str, list[datetime]] = defaultdict(list)
+_codigo_failed: dict[tuple[str, str], list[datetime]] = defaultdict(list)
 _codigo_lock = Lock()
 
 
-def _check_codigo_rate_limit(username: str) -> None:
+def _check_codigo_rate_limit(ip: str, username: str) -> None:
     now = datetime.now(timezone.utc)
+    clave = (ip, username)
     with _codigo_lock:
-        attempts = [t for t in _codigo_failed[username] if now - t < _WINDOW]
-        _codigo_failed[username] = attempts
+        _purgar_si_crece(_codigo_failed)
+        attempts = [t for t in _codigo_failed[clave] if now - t < _WINDOW]
+        _codigo_failed[clave] = attempts
         if len(attempts) >= _MAX_CODIGO_ATTEMPTS:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -134,14 +161,39 @@ def _check_codigo_rate_limit(username: str) -> None:
             )
 
 
-def _register_codigo_attempt(username: str) -> None:
+def _register_codigo_attempt(ip: str, username: str) -> None:
     with _codigo_lock:
-        _codigo_failed[username].append(datetime.now(timezone.utc))
+        _codigo_failed[(ip, username)].append(datetime.now(timezone.utc))
 
 
-def _clear_codigo_failures(username: str) -> None:
+def _clear_codigo_failures(ip: str, username: str) -> None:
     with _codigo_lock:
-        _codigo_failed.pop(username, None)
+        _codigo_failed.pop((ip, username), None)
+
+
+# mfa_token de un solo uso: guardamos los jti ya canjeados para que un token
+# nunca pueda reutilizarse (replay). Se limpian solos por expiración (2 min).
+_mfa_tokens_usados: dict[str, float] = {}
+_mfa_token_lock = Lock()
+_MFA_TOKEN_TTL = 5 * 60
+
+
+def _mfa_token_usado(jti: str) -> bool:
+    """True si el jti ya se canjeó (o si está marcado). Registra el uso."""
+    with _mfa_token_lock:
+        ahora = time.time()
+        viejos = [k for k, v in _mfa_tokens_usados.items() if ahora - v > _MFA_TOKEN_TTL]
+        for k in viejos:
+            _mfa_tokens_usados.pop(k, None)
+        if jti in _mfa_tokens_usados:
+            return True
+        _mfa_tokens_usados[jti] = ahora
+        return False
+
+
+# Hash bcrypt de relleno: verificar una contraseña falsa cuesta lo mismo que
+# verificar la real, así el tiempo de respuesta no revela si el usuario existe.
+_HASH_DUMMY = get_password_hash("contraseña_falsa_de_relleno_2026")
 
 
 @router.post("/register", response_model=RegistroOut)
@@ -232,6 +284,7 @@ def register(
         usuario_id=new_user.id,
         username=new_user.username,
         organization_id=organization_id,
+        ip=_ip(request),
     )
 
     if requiere_verificacion:
@@ -256,28 +309,29 @@ def register(
 @router.post("/verificar-codigo")
 def verificar_codigo(
     datos: CodigoVerificacionRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Activa la cuenta con el código recibido por correo."""
-    _check_codigo_rate_limit(datos.username)
+    """Activa la cuenta con el código recibido por correo.
+
+    Todos los errores devuelven el MISMO mensaje 400: distinguir entre
+    "usuario inexistente" / "sin código" / "código incorrecto" permitiría
+    enumerar cuentas existentes.
+    """
+    ip = _ip(request)
+    _check_codigo_rate_limit(ip, datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if not user:
-        raise HTTPException(status_code=404, detail="No se pudo verificar la cuenta")
-    if not user.codigo_verificacion:
-        raise HTTPException(
-            status_code=400,
-            detail="No hay un código pendiente. Solicita uno nuevo.",
-        )
-    if codigo_vencido(user.codigo_expira):
-        raise HTTPException(
-            status_code=400,
-            detail="El código expiró. Solicita uno nuevo.",
-        )
-    if not codigo_correcto(user.codigo_verificacion, datos.code):
-        _register_codigo_attempt(datos.username)
-        raise HTTPException(status_code=401, detail="Código incorrecto")
+        raise HTTPException(status_code=400, detail="No se pudo verificar la cuenta")
+    if (
+        not user.codigo_verificacion
+        or codigo_vencido(user.codigo_expira)
+        or not codigo_correcto(user.codigo_verificacion, datos.code)
+    ):
+        _register_codigo_attempt(ip, datos.username)
+        raise HTTPException(status_code=400, detail="No se pudo verificar la cuenta")
 
-    _clear_codigo_failures(datos.username)
+    _clear_codigo_failures(ip, datos.username)
     user.activo = True
     user.codigo_verificacion = None
     user.codigo_expira = None
@@ -291,6 +345,7 @@ def verificar_codigo(
         usuario_id=user.id,
         username=user.username,
         organization_id=user.organization_id,
+        ip=_ip(request),
     )
     return {"ok": True}
 
@@ -303,7 +358,7 @@ def reenviar_codigo(
 ):
     """Regenera y reenvía el código de verificación."""
     _check_ip_rate_limit(request)
-    _check_codigo_rate_limit(datos.username)
+    _check_codigo_rate_limit(_ip(request), datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if not user or user.activo or not user.correo:
         raise HTTPException(
@@ -321,7 +376,6 @@ def reenviar_codigo(
             status_code=503,
             detail="No se pudo enviar el correo en este momento. Intenta más tarde.",
         ) from None
-    _register_codigo_attempt(datos.username)
     user.codigo_verificacion = hash_codigo
     user.codigo_expira = datetime.utcnow() + vigencia
     db.commit()
@@ -330,7 +384,7 @@ def reenviar_codigo(
 
 class CorreoUpdateRequest(BaseModel):
     correo: str = Field(min_length=3, max_length=200)
-    password: str = Field(min_length=6, max_length=72)
+    password: str = Field(min_length=8, max_length=72)
 
 
 @router.put("/correo")
@@ -362,9 +416,11 @@ def recuperar(
     """Envía un código por correo para restablecer la contraseña.
 
     La respuesta es idéntica exista o no el usuario (evita enumerar cuentas).
+    El límite es por IP (no por username): así un atacante no puede bloquear
+    la recuperación de otro usuario solo conociendo su nombre.
     """
     _check_ip_rate_limit(request)
-    _check_codigo_rate_limit(datos.username)
+    _check_codigo_rate_limit(_ip(request), datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if user and user.correo:
         try:
@@ -378,7 +434,6 @@ def recuperar(
                 status_code=503,
                 detail="No se pudo enviar el correo en este momento. Intenta más tarde.",
             ) from None
-        _register_codigo_attempt(datos.username)
         user.codigo_verificacion = hash_codigo
         user.codigo_expira = datetime.utcnow() + vigencia
         db.commit()
@@ -388,29 +443,36 @@ def recuperar(
 @router.post("/recuperar-confirmar")
 def recuperar_confirmar(
     datos: RecuperarConfirmarRequest,
+    request: Request,
     db: Session = Depends(get_db),
 ):
-    """Valida el código y cambia la contraseña."""
-    _check_codigo_rate_limit(datos.username)
-    user = db.query(User).filter(User.username == datos.username).first()
-    if not user or not user.codigo_verificacion:
-        raise HTTPException(
-            status_code=400,
-            detail="No hay un código pendiente. Solicita uno nuevo.",
-        )
-    if codigo_vencido(user.codigo_expira):
-        raise HTTPException(
-            status_code=400,
-            detail="El código expiró. Solicita uno nuevo.",
-        )
-    if not codigo_correcto(user.codigo_verificacion, datos.code):
-        _register_codigo_attempt(datos.username)
-        raise HTTPException(status_code=401, detail="Código incorrecto")
+    """Valida el código y cambia la contraseña.
 
-    _clear_codigo_failures(datos.username)
+    Mensajes idénticos para todos los fallos: distinguiendo el 401 del 400 se
+    podrían enumerar cuentas. Al cambiar la contraseña se revocan TODAS las
+    sesiones activas (los refresh tokens quedan inservibles).
+    """
+    ip = _ip(request)
+    _check_codigo_rate_limit(ip, datos.username)
+    user = db.query(User).filter(User.username == datos.username).first()
+    if (
+        not user
+        or not user.codigo_verificacion
+        or codigo_vencido(user.codigo_expira)
+        or not codigo_correcto(user.codigo_verificacion, datos.code)
+    ):
+        _register_codigo_attempt(ip, datos.username)
+        raise HTTPException(status_code=400, detail="No se pudo restablecer la contraseña")
+
+    _clear_codigo_failures(ip, datos.username)
     user.hashed_password = get_password_hash(datos.nueva_password)
     user.codigo_verificacion = None
     user.codigo_expira = None
+    # Revoca todas las sesiones: un refresh token robado no sobrevive al
+    # cambio de contraseña.
+    db.query(RefreshToken).filter(RefreshToken.user_id == user.id).update(
+        {"revoked": True}
+    )
     db.commit()
     registrar(
         db,
@@ -421,6 +483,7 @@ def recuperar_confirmar(
         usuario_id=user.id,
         username=user.username,
         organization_id=user.organization_id,
+        ip=_ip(request),
     )
     return {"ok": True}
 
@@ -431,12 +494,24 @@ def login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    _check_rate_limit(form_data.username)
+    ip = _ip(request)
+    _check_rate_limit(ip, form_data.username)
     _check_ip_rate_limit(request)
 
     user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        _register_failure(form_data.username)
+    # El hash de relleno hace que el tiempo de respuesta sea el mismo exista
+    # o no el usuario (anti-enumeración por timing).
+    if not user:
+        verify_password(form_data.password, _HASH_DUMMY)
+        _register_failure(ip, form_data.username)
+        _register_ip_attempt(request)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Usuario o contraseña incorrectos",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if not verify_password(form_data.password, user.hashed_password):
+        _register_failure(ip, form_data.username)
         _register_ip_attempt(request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -448,36 +523,49 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tu cuenta no puede iniciar sesión. Verifica tu correo o contacta a tu administrador.",
         )
-    _clear_failures(form_data.username)
+    _clear_failures(ip, form_data.username)
 
     # Si el usuario tiene MFA activado, primero hay que validar el código
     if user.mfa_secret:
-        mfa_token = create_mfa_token({"sub": user.username, "type": "mfa"})
+        mfa_token = create_mfa_token({"sub": user.username})
         return {
             "mfa_required": True,
             "mfa_token": mfa_token,
             "token_type": "bearer",
         }
 
-    return _emitir_sesion(db, user, registrar_login=True)
+    return _emitir_sesion(db, user, registrar_login=True, ip=ip)
 
 
 @router.post("/mfa/confirm", response_model=Token)
-def mfa_confirm(datos: MfaConfirmRequest, db: Session = Depends(get_db)):
-    """Segundo paso del login con MFA: valida el código TOTP y entrega los tokens."""
+def mfa_confirm(
+    datos: MfaConfirmRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Segundo paso del login con MFA: valida el código TOTP y entrega los tokens.
+
+    El mfa_token es de UN SOLO USO (jti): reutilizarlo o usarlo como Bearer
+    en otros endpoints es imposible — solo sirve para /mfa/confirm.
+    """
     try:
         payload = jwt.decode(
-            datos.mfa_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+            datos.mfa_token, _clave_jwt(), algorithms=[settings.ALGORITHM]
         )
     except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesión MFA inválida o expirada",
         )
-    if payload.get("type") != "mfa":
+    if payload.get("type") != "mfa" or not payload.get("jti"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesión MFA inválida",
+        )
+    if _mfa_token_usado(payload["jti"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Sesión MFA ya utilizada",
         )
 
     user = db.query(User).filter(User.username == payload.get("sub")).first()
@@ -500,7 +588,7 @@ def mfa_confirm(datos: MfaConfirmRequest, db: Session = Depends(get_db)):
             detail="Código incorrecto",
         )
 
-    return _emitir_sesion(db, user, registrar_login=True)
+    return _emitir_sesion(db, user, registrar_login=True, ip=_ip(request))
 
 
 @router.post("/mfa/setup", response_model=MfaSetupOut)
@@ -619,7 +707,7 @@ def _register_mfa_failure(user_id: int) -> None:
         _mfa_failed[user_id].append(datetime.now(timezone.utc))
 
 
-def _emitir_sesion(db: Session, user: User, registrar_login: bool) -> dict:
+def _emitir_sesion(db: Session, user: User, registrar_login: bool, ip: str | None = None) -> dict:
     """Crea el par access/refresh y devuelve la respuesta del login."""
     access_token = create_access_token(data={"sub": user.username, "rol": user.rol})
     refresh_token = _emitir_refresh_token(db, user)
@@ -632,6 +720,7 @@ def _emitir_sesion(db: Session, user: User, registrar_login: bool) -> dict:
             usuario_id=user.id,
             username=user.username,
             organization_id=user.organization_id,
+            ip=ip,
         )
     return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
@@ -744,6 +833,7 @@ def listar_usuarios(
 def actualizar_usuario(
     user_id: int,
     update: UserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     admin: User = Depends(require_role("admin")),
 ):
@@ -794,6 +884,11 @@ def actualizar_usuario(
         usuario.activo = update.activo
     if update.password is not None:
         usuario.hashed_password = get_password_hash(update.password)
+        # Un reset de contraseña revoca todas las sesiones del usuario:
+        # un token robado no sobrevive al cambio.
+        db.query(RefreshToken).filter(RefreshToken.user_id == usuario.id).update(
+            {"revoked": True}
+        )
 
     db.commit()
     db.refresh(usuario)
@@ -813,5 +908,6 @@ def actualizar_usuario(
         usuario_id=admin.id,
         username=admin.username,
         organization_id=admin.organization_id,
+        ip=ip_cliente(request),
     )
     return usuario

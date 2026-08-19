@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
@@ -28,7 +31,7 @@ jobs:
     env:
       TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/libreria_test
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/libreria_test
-      SECRET_KEY: ci-secret-key
+      SECRET_KEY: ci-secret-key-con-longitud-suficiente-para-los-tests
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 60
     steps:

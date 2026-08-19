@@ -6,6 +6,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -33,15 +34,50 @@ app = FastAPI(
     title="Librería API",
     version="1.0.0",
     lifespan=lifespan,
+    # En producción se oculta la documentación interactiva: expone toda la
+    # superficie de ataque sin autenticación.
+    docs_url=None if settings.ENVIRONMENT == "production" else "/docs",
+    redoc_url=None if settings.ENVIRONMENT == "production" else "/redoc",
+    openapi_url=None if settings.ENVIRONMENT == "production" else "/openapi.json",
 )
 
-# Middleware CORS
+# Middleware CORS: la app nativa (Expo) no aplica CORS; solo se permite el
+# desarrollo web (Expo web) y "null" (origen del escritorio Electron empaquetado).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:8081",
+        "http://localhost:19006",
+        "null",
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Solo responde al dominio real de la API (evita ataques de Host header)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=[
+        "libreria-api-4lr3.onrender.com",
+        "*.onrender.com",
+        "localhost",
+        "127.0.0.1",
+        "testserver",
+    ],
+)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers de seguridad en TODAS las respuestas (API y panel web)."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = "frame-ancestors 'none'"
+    if settings.ENVIRONMENT == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 @app.middleware("http")

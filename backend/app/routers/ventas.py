@@ -2,13 +2,14 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.audit import registrar
 from app.core.database import get_db
-from app.core.deps import get_current_user, require_role
+from app.core.deps import get_current_user, ip_cliente, require_role
 from app.models.organization import Organization
 from app.models.producto import Producto
 from app.models.user import User
@@ -32,21 +33,23 @@ router = APIRouter(
     dependencies=[Depends(require_role("admin", "ventas"))],
 )
 
-# Deduplicación de ventas offline (en memoria): si el dispositivo reintenta
-# con el mismo id_local (timeout, red), no se registra la venta dos veces.
-# El diccionario se limpia perezosamente (ventanas de 1 hora).
+# Cache en memoria SOLO como atajo (evita consultas repetidas). La garantía
+# real de deduplicación está en la BD: el índice único (organization_id,
+# id_local) impide crear la misma venta dos veces aunque dos requests
+# lleguen en paralelo o el proceso se reinicie.
 _IDS_SINCRONIZADOS: dict[tuple[int, str], tuple[int, float]] = {}
 _ID_SYNC_TTL_SEGUNDOS = 3600
+_ID_SYNC_MAX_ENTRIES = 20_000
 
 
-def _es_id_local_nuevo(organization_id: int, id_local: str) -> bool:
-    clave = (organization_id, id_local)
+def _purge_ids_sincronizados() -> None:
+    if len(_IDS_SINCRONIZADOS) < _ID_SYNC_MAX_ENTRIES:
+        return
     ahora = time.time()
-    viejo = _IDS_SINCRONIZADOS.get(clave)
-    if viejo and ahora - viejo[1] < _ID_SYNC_TTL_SEGUNDOS:
-        return False
-    _IDS_SINCRONIZADOS[clave] = (viejo[0] if viejo else 0, ahora)
-    return True
+    for clave in list(_IDS_SINCRONIZADOS.keys()):
+        _, marcado = _IDS_SINCRONIZADOS[clave]
+        if ahora - marcado > _ID_SYNC_TTL_SEGUNDOS:
+            _IDS_SINCRONIZADOS.pop(clave, None)
 
 
 def _fecha_sync_valida(fecha: datetime | None) -> datetime | None:
@@ -88,6 +91,8 @@ def _crear_venta_db(
     detalles,
     metodo_pago: str,
     fecha=None,
+    id_local: str | None = None,
+    ip: str | None = None,
 ) -> Venta:
     """Valida productos, descuenta stock y crea la venta (precio del servidor).
 
@@ -137,12 +142,17 @@ def _crear_venta_db(
             )
         )
 
+    if total_venta > Decimal("99999999.99"):
+        db.rollback()
+        raise HTTPException(status_code=400, detail="El total de la venta es demasiado grande")
+
     nueva_venta = Venta(
         total=total_venta,
         metodo_pago=metodo_pago,
         organization_id=usuario.organization_id,
         usuario_id=usuario.id,
         fecha=fecha,
+        id_local=id_local,
     )
     db.add(nueva_venta)
     try:
@@ -163,6 +173,7 @@ def _crear_venta_db(
             username=usuario.username,
             organization_id=usuario.organization_id,
             commit=False,
+            ip=ip,
         )
         db.commit()
     except Exception:
@@ -179,19 +190,53 @@ def _crear_venta_db(
     return nueva_venta
 
 
+def _venta_existente(db: Session, organization_id: int, id_local: str) -> Venta | None:
+    """Busca una venta ya registrada con el mismo id_local (dedup en BD)."""
+    return (
+        db.query(Venta)
+        .options(selectinload(Venta.detalles).selectinload(VentaDetalle.producto))
+        .filter(
+            Venta.organization_id == organization_id,
+            Venta.id_local == id_local,
+        )
+        .first()
+    )
+
+
 @router.post("/", response_model=VentaOut)
 def crear_venta(
     venta: VentaCreate,
+    request: Request,
     db: Session = Depends(get_db),
     usuario: User = Depends(get_current_user),
 ):
-    nueva_venta = _crear_venta_db(db, usuario, venta.detalles, venta.metodo_pago)
+    """Crea una venta. Si el cliente envía `id_local`, la venta es idempotente:
+    reintentar con el mismo id no cobra dos veces."""
+    ip = ip_cliente(request)
+    if venta.id_local:
+        existente = _venta_existente(db, usuario.organization_id, venta.id_local)
+        if existente:
+            return _venta_out(existente)
+        try:
+            nueva_venta = _crear_venta_db(
+                db, usuario, venta.detalles, venta.metodo_pago, id_local=venta.id_local, ip=ip
+            )
+        except IntegrityError:
+            # Dos requests simultáneos con el mismo id_local: gana el primero
+            db.rollback()
+            existente = _venta_existente(db, usuario.organization_id, venta.id_local)
+            if existente:
+                return _venta_out(existente)
+            raise
+    else:
+        nueva_venta = _crear_venta_db(db, usuario, venta.detalles, venta.metodo_pago, ip=ip)
     return _venta_out(nueva_venta)
 
 
 @router.post("/offline-sync", response_model=SyncVentasResponse)
 def sincronizar_ventas_offline(
     datos: SyncVentasRequest,
+    request: Request,
     db: Session = Depends(get_db),
     usuario: User = Depends(get_current_user),
 ):
@@ -202,8 +247,10 @@ def sincronizar_ventas_offline(
     recibe el motivo por venta.
     """
     resultados = []
+    ip = ip_cliente(request)
     for pendiente in datos.ventas:
         clave = (usuario.organization_id, pendiente.id_local)
+        _purge_ids_sincronizados()
         duplicado = _IDS_SINCRONIZADOS.get(clave)
         if duplicado and time.time() - duplicado[1] < _ID_SYNC_TTL_SEGUNDOS:
             resultados.append(
@@ -215,6 +262,19 @@ def sincronizar_ventas_offline(
                 }
             )
             continue
+        # Garantía real de dedup: la BD (índice único org+id_local)
+        existente = _venta_existente(db, usuario.organization_id, pendiente.id_local)
+        if existente:
+            _IDS_SINCRONIZADOS[clave] = (existente.id, time.time())
+            resultados.append(
+                {
+                    "id_local": pendiente.id_local,
+                    "id_servidor": existente.id,
+                    "total": float(existente.total),
+                    "error": None,
+                }
+            )
+            continue
         try:
             venta = _crear_venta_db(
                 db,
@@ -222,6 +282,8 @@ def sincronizar_ventas_offline(
                 pendiente.detalles,
                 pendiente.metodo_pago,
                 fecha=_fecha_sync_valida(pendiente.fecha),
+                id_local=pendiente.id_local,
+                ip=ip,
             )
             _IDS_SINCRONIZADOS[clave] = (venta.id, time.time())
             resultados.append(
@@ -232,6 +294,29 @@ def sincronizar_ventas_offline(
                     "error": None,
                 }
             )
+        except IntegrityError:
+            # Dos requests en paralelo con el mismo id_local: el otro ganó
+            db.rollback()
+            existente = _venta_existente(db, usuario.organization_id, pendiente.id_local)
+            if existente:
+                _IDS_SINCRONIZADOS[clave] = (existente.id, time.time())
+                resultados.append(
+                    {
+                        "id_local": pendiente.id_local,
+                        "id_servidor": existente.id,
+                        "total": float(existente.total),
+                        "error": None,
+                    }
+                )
+            else:
+                resultados.append(
+                    {
+                        "id_local": pendiente.id_local,
+                        "id_servidor": None,
+                        "total": None,
+                        "error": "No se pudo registrar la venta. Intenta de nuevo.",
+                    }
+                )
         except HTTPException as e:
             resultados.append(
                 {
@@ -246,7 +331,7 @@ def sincronizar_ventas_offline(
 
 @router.get("/", response_model=Paginated[VentaOut])
 def listar_ventas(
-    page: int = Query(default=1, ge=1),
+    page: int = Query(default=1, ge=1, le=1000),
     page_size: int = Query(default=50, ge=1, le=200),
     db: Session = Depends(get_db),
     admin: User = Depends(require_role("admin")),

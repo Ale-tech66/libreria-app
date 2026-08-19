@@ -13,6 +13,7 @@ def registrar(
     username: str | None = None,
     organization_id: int | None = None,
     commit: bool = True,
+    ip: str | None = None,
 ) -> AuditLog:
     """Registra una acción crítica en el log de auditoría.
 
@@ -27,6 +28,7 @@ def registrar(
         recurso=recurso,
         recurso_id=recurso_id,
         detalle=detalle,
+        ip=ip,
     )
     db.add(entrada)
     if commit:

@@ -31,7 +31,7 @@ tiene_productos = insp.has_table("productos")
 tiene_foto = tiene_productos and "foto" in [c["name"] for c in insp.get_columns("productos")]
 
 BASE = "0400b0515d57"
-HEAD = "73530ad5ffcd"
+HEAD = "9f3a6c21d8e4"
 PREV = "a10499b448a0"
 
 def run(*args):
@@ -54,8 +54,10 @@ else:
 EOF
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Admin inicial: si ADMIN_PASSWORD está definida, crea el usuario admin
-# (no hace nada si ya existe). Definir ADMIN_PASSWORD en el dashboard de Render.
+# Admin inicial: si ADMIN_PASSWORD está definida, crea el usuario admin SOLO
+# si no existe (ver create_admin.py: es de UN SOLO USO; no resetea contraseña
+# ni borra el MFA de un admin existente). Tras el primer deploy conviene
+# BORRAR ADMIN_PASSWORD del dashboard de Render.
 # ─────────────────────────────────────────────────────────────────────────────
 if [ -n "$ADMIN_PASSWORD" ]; then
     echo "→ Creando admin inicial si no existe..."
