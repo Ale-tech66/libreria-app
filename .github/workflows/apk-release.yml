@@ -1,0 +1,27 @@
+name: Publicar APK
+
+on:
+  push:
+    tags:
+      - 'v1.2.0'
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descargar APK del build de EAS
+        run: curl -sL -o LibreriaApp-1.2.0.apk "$APK_URL"
+        env:
+          APK_URL: https://expo.dev/artifacts/eas/C_Pj6DLWF_WzsuubIsUj1fYtJWIrD9KZe0fYoKXdX7o.apk
+
+      - name: Crear release
+        env:
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release create v1.2.0 "LibreriaApp-1.2.0.apk" \
+            --title "Librería App v1.2.0" \
+            --notes "Correcciones de seguridad: MFA requiere contraseña, cambio de correo requiere contraseña, respaldos por organización, límites de intentos, mejoras en sync offline."
