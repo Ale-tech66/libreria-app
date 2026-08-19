@@ -1,17 +1,15 @@
-from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from threading import Lock
-import time
 
+import jwt
 import pyotp
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.audit import registrar
+from app.core import rate_limit as rate_lim
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import (
@@ -59,60 +57,49 @@ from app.schemas import (
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
-# ─────────────────── Rate limiting básico (en memoria) ───────────────────
-# Suficiente para una sola instancia. Para múltiples instancias usar Redis.
+# ─────────────────── Rate limiting (persistente en BD) ───────────────────
+# Los contadores viven en Postgres (tabla rate_limits): sobreviven reinicios
+# del servidor y funcionan igual con una sola instancia o varias.
 
 _MAX_ATTEMPTS = 5
 _WINDOW = timedelta(minutes=15)
-_lock = Lock()
-# Clave: (ip, username). Un atacante no puede consumir el presupuesto de
-# otro usuario desde su propia IP (evita el lockout-DoS con solo el username).
-_failed: dict[tuple[str, str], list[datetime]] = defaultdict(list)
-_MAX_ENTRIES = 20_000
 
 
-def _purgar_si_crece(diccionario: dict, limite: int = _MAX_ENTRIES) -> None:
-    """Evita el crecimiento ilimitado de memoria con claves rotativas."""
-    if len(diccionario) < limite:
-        return
-    ahora = datetime.now(timezone.utc)
-    for clave in list(diccionario.keys()):
-        intentos = [t for t in diccionario[clave] if ahora - t < _WINDOW]
-        if intentos:
-            diccionario[clave] = intentos
-        else:
-            diccionario.pop(clave, None)
+def _clave_login(ip: str, username: str) -> str:
+    return f"login:{ip}:{username}"
 
 
-def _check_rate_limit(ip: str, username: str) -> None:
-    now = datetime.now(timezone.utc)
-    clave = (ip, username)
-    with _lock:
-        _purgar_si_crece(_failed)
-        attempts = [t for t in _failed[clave] if now - t < _WINDOW]
-        _failed[clave] = attempts
-        if len(attempts) >= _MAX_ATTEMPTS:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Demasiados intentos fallidos. Intenta de nuevo en unos minutos.",
-            )
+def _clave_ip(ip: str) -> str:
+    return f"ip:{ip}"
 
 
-def _register_failure(ip: str, username: str) -> None:
-    with _lock:
-        _failed[(ip, username)].append(datetime.now(timezone.utc))
+def _clave_codigo(ip: str, username: str) -> str:
+    return f"codigo:{ip}:{username}"
 
 
-def _clear_failures(ip: str, username: str) -> None:
-    with _lock:
-        _failed.pop((ip, username), None)
+def _clave_mfa(user_id: int) -> str:
+    return f"mfa:{user_id}"
+
+
+def _check_rate_limit(db: Session, ip: str, username: str) -> None:
+    if rate_lim.intentos(db, _clave_login(ip, username), _WINDOW) >= _MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos fallidos. Intenta de nuevo en unos minutos.",
+        )
+
+
+def _register_failure(db: Session, ip: str, username: str) -> None:
+    rate_lim.registrar(db, _clave_login(ip, username), _WINDOW)
+
+
+def _clear_failures(db: Session, ip: str, username: str) -> None:
+    rate_lim.limpiar(db, _clave_login(ip, username))
 
 
 # Límite por IP (login, registro y envío de códigos): frena el password
 # spraying contra muchos usuarios y el abuso del envío de correos.
 _MAX_IP_ATTEMPTS = 25
-_ip_failed: dict[str, list[datetime]] = defaultdict(list)
-_ip_lock = Lock()
 
 
 def _ip(request: Request) -> str:
@@ -120,75 +107,48 @@ def _ip(request: Request) -> str:
     return ip_cliente(request)
 
 
-def _check_ip_rate_limit(request: Request) -> None:
-    now = datetime.now(timezone.utc)
-    ip = _ip(request)
-    with _ip_lock:
-        _purgar_si_crece(_ip_failed)
-        attempts = [t for t in _ip_failed[ip] if now - t < _WINDOW]
-        _ip_failed[ip] = attempts
-        if len(attempts) >= _MAX_IP_ATTEMPTS:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Demasiadas solicitudes desde esta conexión. Intenta de nuevo más tarde.",
-            )
+def _check_ip_rate_limit(db: Session, request: Request) -> None:
+    if rate_lim.intentos(db, _clave_ip(_ip(request)), _WINDOW) >= _MAX_IP_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiadas solicitudes desde esta conexión. Intenta de nuevo más tarde.",
+        )
 
 
-def _register_ip_attempt(request: Request) -> None:
-    with _ip_lock:
-        _ip_failed[_ip(request)].append(datetime.now(timezone.utc))
+def _register_ip_attempt(db: Session, request: Request) -> None:
+    rate_lim.registrar(db, _clave_ip(_ip(request)), _WINDOW)
 
 
 # Límite de intentos para códigos de 6 dígitos (verificación y recuperación):
 # sin esto, un código de 10^6 combinaciones sería forzable por fuerza bruta.
 # La clave es (ip, username): desde otra IP no se puede bloquear a la víctima.
 _MAX_CODIGO_ATTEMPTS = 5
-_codigo_failed: dict[tuple[str, str], list[datetime]] = defaultdict(list)
-_codigo_lock = Lock()
 
 
-def _check_codigo_rate_limit(ip: str, username: str) -> None:
-    now = datetime.now(timezone.utc)
-    clave = (ip, username)
-    with _codigo_lock:
-        _purgar_si_crece(_codigo_failed)
-        attempts = [t for t in _codigo_failed[clave] if now - t < _WINDOW]
-        _codigo_failed[clave] = attempts
-        if len(attempts) >= _MAX_CODIGO_ATTEMPTS:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Demasiados intentos. Solicita un código nuevo más tarde.",
-            )
+def _check_codigo_rate_limit(db: Session, ip: str, username: str) -> None:
+    if rate_lim.intentos(db, _clave_codigo(ip, username), _WINDOW) >= _MAX_CODIGO_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos. Solicita un código nuevo más tarde.",
+        )
 
 
-def _register_codigo_attempt(ip: str, username: str) -> None:
-    with _codigo_lock:
-        _codigo_failed[(ip, username)].append(datetime.now(timezone.utc))
+def _register_codigo_attempt(db: Session, ip: str, username: str) -> None:
+    rate_lim.registrar(db, _clave_codigo(ip, username), _WINDOW)
 
 
-def _clear_codigo_failures(ip: str, username: str) -> None:
-    with _codigo_lock:
-        _codigo_failed.pop((ip, username), None)
+def _clear_codigo_failures(db: Session, ip: str, username: str) -> None:
+    rate_lim.limpiar(db, _clave_codigo(ip, username))
 
 
-# mfa_token de un solo uso: guardamos los jti ya canjeados para que un token
-# nunca pueda reutilizarse (replay). Se limpian solos por expiración (2 min).
-_mfa_tokens_usados: dict[str, float] = {}
-_mfa_token_lock = Lock()
-_MFA_TOKEN_TTL = 5 * 60
+# mfa_token de un solo uso: los jti ya canjeados se guardan en BD
+# (tabla mfa_tokens_usados) y expiran solos a los 5 minutos.
+_MFA_TOKEN_TTL_MIN = 5
 
 
-def _mfa_token_usado(jti: str) -> bool:
-    """True si el jti ya se canjeó (o si está marcado). Registra el uso."""
-    with _mfa_token_lock:
-        ahora = time.time()
-        viejos = [k for k, v in _mfa_tokens_usados.items() if ahora - v > _MFA_TOKEN_TTL]
-        for k in viejos:
-            _mfa_tokens_usados.pop(k, None)
-        if jti in _mfa_tokens_usados:
-            return True
-        _mfa_tokens_usados[jti] = ahora
-        return False
+def _mfa_token_usado(db: Session, jti: str) -> bool:
+    """True si el jti ya se canjeó; si no, lo registra como usado."""
+    return rate_lim.mfa_token_usado(db, jti)
 
 
 # Hash bcrypt de relleno: verificar una contraseña falsa cuesta lo mismo que
@@ -212,7 +172,7 @@ def register(
     Si el correo está configurado en el servidor, la primera cuenta (la del
     dueño) se crea inactiva y recibe un código por correo para activarla.
     """
-    _check_ip_rate_limit(request)
+    _check_ip_rate_limit(db, request)
     db_user = db.query(User).filter(User.username == user.username).first()
     if db_user:
         raise HTTPException(status_code=400, detail="El usuario ya existe")
@@ -319,7 +279,7 @@ def verificar_codigo(
     enumerar cuentas existentes.
     """
     ip = _ip(request)
-    _check_codigo_rate_limit(ip, datos.username)
+    _check_codigo_rate_limit(db, ip, datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if not user:
         raise HTTPException(status_code=400, detail="No se pudo verificar la cuenta")
@@ -328,10 +288,10 @@ def verificar_codigo(
         or codigo_vencido(user.codigo_expira)
         or not codigo_correcto(user.codigo_verificacion, datos.code)
     ):
-        _register_codigo_attempt(ip, datos.username)
+        _register_codigo_attempt(db, ip, datos.username)
         raise HTTPException(status_code=400, detail="No se pudo verificar la cuenta")
 
-    _clear_codigo_failures(ip, datos.username)
+    _clear_codigo_failures(db, ip, datos.username)
     user.activo = True
     user.codigo_verificacion = None
     user.codigo_expira = None
@@ -357,8 +317,8 @@ def reenviar_codigo(
     db: Session = Depends(get_db),
 ):
     """Regenera y reenvía el código de verificación."""
-    _check_ip_rate_limit(request)
-    _check_codigo_rate_limit(_ip(request), datos.username)
+    _check_ip_rate_limit(db, request)
+    _check_codigo_rate_limit(db, _ip(request), datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if not user or user.activo or not user.correo:
         raise HTTPException(
@@ -419,8 +379,8 @@ def recuperar(
     El límite es por IP (no por username): así un atacante no puede bloquear
     la recuperación de otro usuario solo conociendo su nombre.
     """
-    _check_ip_rate_limit(request)
-    _check_codigo_rate_limit(_ip(request), datos.username)
+    _check_ip_rate_limit(db, request)
+    _check_codigo_rate_limit(db, _ip(request), datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if user and user.correo:
         try:
@@ -453,7 +413,7 @@ def recuperar_confirmar(
     sesiones activas (los refresh tokens quedan inservibles).
     """
     ip = _ip(request)
-    _check_codigo_rate_limit(ip, datos.username)
+    _check_codigo_rate_limit(db, ip, datos.username)
     user = db.query(User).filter(User.username == datos.username).first()
     if (
         not user
@@ -461,10 +421,10 @@ def recuperar_confirmar(
         or codigo_vencido(user.codigo_expira)
         or not codigo_correcto(user.codigo_verificacion, datos.code)
     ):
-        _register_codigo_attempt(ip, datos.username)
+        _register_codigo_attempt(db, ip, datos.username)
         raise HTTPException(status_code=400, detail="No se pudo restablecer la contraseña")
 
-    _clear_codigo_failures(ip, datos.username)
+    _clear_codigo_failures(db, ip, datos.username)
     user.hashed_password = get_password_hash(datos.nueva_password)
     user.codigo_verificacion = None
     user.codigo_expira = None
@@ -495,24 +455,24 @@ def login(
     db: Session = Depends(get_db),
 ):
     ip = _ip(request)
-    _check_rate_limit(ip, form_data.username)
-    _check_ip_rate_limit(request)
+    _check_rate_limit(db, ip, form_data.username)
+    _check_ip_rate_limit(db, request)
 
     user = db.query(User).filter(User.username == form_data.username).first()
     # El hash de relleno hace que el tiempo de respuesta sea el mismo exista
     # o no el usuario (anti-enumeración por timing).
     if not user:
         verify_password(form_data.password, _HASH_DUMMY)
-        _register_failure(ip, form_data.username)
-        _register_ip_attempt(request)
+        _register_failure(db, ip, form_data.username)
+        _register_ip_attempt(db, request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario o contraseña incorrectos",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not verify_password(form_data.password, user.hashed_password):
-        _register_failure(ip, form_data.username)
-        _register_ip_attempt(request)
+        _register_failure(db, ip, form_data.username)
+        _register_ip_attempt(db, request)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Usuario o contraseña incorrectos",
@@ -523,7 +483,7 @@ def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Tu cuenta no puede iniciar sesión. Verifica tu correo o contacta a tu administrador.",
         )
-    _clear_failures(ip, form_data.username)
+    _clear_failures(db, ip, form_data.username)
 
     # Si el usuario tiene MFA activado, primero hay que validar el código
     if user.mfa_secret:
@@ -552,7 +512,7 @@ def mfa_confirm(
         payload = jwt.decode(
             datos.mfa_token, _clave_jwt(), algorithms=[settings.ALGORITHM]
         )
-    except JWTError:
+    except jwt.InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesión MFA inválida o expirada",
@@ -562,7 +522,7 @@ def mfa_confirm(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesión MFA inválida",
         )
-    if _mfa_token_usado(payload["jti"]):
+    if _mfa_token_usado(db, payload["jti"]):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Sesión MFA ya utilizada",
@@ -580,9 +540,9 @@ def mfa_confirm(
             detail="MFA no está configurado para este usuario",
         )
 
-    _check_mfa_rate_limit(user.id)
+    _check_mfa_rate_limit(db, user.id)
     if not _verificar_totp(user, datos.code):
-        _register_mfa_failure(user.id)
+        _register_mfa_failure(db, user.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Código incorrecto",
@@ -624,9 +584,9 @@ def mfa_verify_setup(
     """
     if not verify_password(datos.password, usuario.hashed_password):
         raise HTTPException(status_code=401, detail="Contraseña incorrecta")
-    _check_mfa_rate_limit(usuario.id)
+    _check_mfa_rate_limit(db, usuario.id)
     if not pyotp.TOTP(datos.secret).verify(datos.code, valid_window=1):
-        _register_mfa_failure(usuario.id)
+        _register_mfa_failure(db, usuario.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Código incorrecto",
@@ -658,9 +618,9 @@ def mfa_disable(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="MFA no está configurado",
         )
-    _check_mfa_rate_limit(usuario.id)
+    _check_mfa_rate_limit(db, usuario.id)
     if not _verificar_totp(usuario, datos.code):
-        _register_mfa_failure(usuario.id)
+        _register_mfa_failure(db, usuario.id)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Código incorrecto",
@@ -684,27 +644,20 @@ def _verificar_totp(user: User, code: str) -> bool:
     return pyotp.TOTP(user.mfa_secret).verify(code.strip(), valid_window=1)
 
 
-# Rate limiting específico para códigos MFA
+# Rate limiting específico para códigos MFA (persistente en BD)
 _MFA_MAX_ATTEMPTS = 5
-_mfa_failed: dict[int, list[datetime]] = defaultdict(list)
-_mfa_lock = Lock()
 
 
-def _check_mfa_rate_limit(user_id: int) -> None:
-    now = datetime.now(timezone.utc)
-    with _mfa_lock:
-        attempts = [t for t in _mfa_failed[user_id] if now - t < _WINDOW]
-        _mfa_failed[user_id] = attempts
-        if len(attempts) >= _MFA_MAX_ATTEMPTS:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Demasiados intentos de código. Intenta de nuevo en unos minutos.",
-            )
+def _check_mfa_rate_limit(db: Session, user_id: int) -> None:
+    if rate_lim.intentos(db, _clave_mfa(user_id), _WINDOW) >= _MFA_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Demasiados intentos de código. Intenta de nuevo en unos minutos.",
+        )
 
 
-def _register_mfa_failure(user_id: int) -> None:
-    with _mfa_lock:
-        _mfa_failed[user_id].append(datetime.now(timezone.utc))
+def _register_mfa_failure(db: Session, user_id: int) -> None:
+    rate_lim.registrar(db, _clave_mfa(user_id), _WINDOW)
 
 
 def _emitir_sesion(db: Session, user: User, registrar_login: bool, ip: str | None = None) -> dict:

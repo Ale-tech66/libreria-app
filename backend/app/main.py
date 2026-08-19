@@ -4,7 +4,7 @@ import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -112,9 +112,16 @@ app.include_router(productos.router)
 app.include_router(ventas.router)
 app.include_router(backups.router)
 
-# Fotos de productos (acceso público de solo lectura)
+# Fotos de productos. En desarrollo se sirven desde disco; en producción las
+# fotos viven en Cloudinary (URL pública) y /uploads queda cerrado (404) para
+# no exponer archivos sin control.
 Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
-app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
+if settings.ENVIRONMENT == "production":
+    @app.get("/uploads/{ruta:path}", include_in_schema=False)
+    async def uploads_cerrado(ruta: str):
+        raise HTTPException(status_code=404, detail="No encontrado")
+else:
+    app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads")
 
 
 @app.get("/")

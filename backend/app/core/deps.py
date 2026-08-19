@@ -1,6 +1,6 @@
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+import jwt
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.database import get_db
@@ -30,7 +30,7 @@ def _decodificar(token: str):
     """Decodifica y valida el token. Devuelve el payload o None."""
     try:
         payload = jwt.decode(token, _clave_jwt(), algorithms=[settings.ALGORITHM])
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None
     # SOLO se aceptan access tokens. Un mfa_token (type "mfa") no debe
     # poder usarse como Bearer: anularía el MFA.

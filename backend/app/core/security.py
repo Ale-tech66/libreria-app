@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import hashlib
 import secrets
-from jose import jwt
+import jwt
 import bcrypt
 from app.core.config import settings
 
